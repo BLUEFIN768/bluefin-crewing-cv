@@ -144,8 +144,9 @@ def analyze_cv(api_key, text_content):
     prompt = f"{SYSTEM_PROMPT}\n\nAşağıdaki CV içeriğini analiz et:\n\n{text_content}"
     prompt_safe = prompt.encode("utf-8", "ignore").decode("utf-8")
     
+    # 503 aşırı yüklenmelerine karşı en kararlı ve hafif model
     response = client.models.generate_content(
-        model="gemini-3.8-flash",
+        model="gemini-2.0-flash",
         contents=prompt_safe,
     )
     
