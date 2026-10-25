@@ -122,15 +122,21 @@ def extract_content(file_bytes, file_name):
     elif ext == ".pdf":
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
         for page in reader.pages:
-            t = page.extract_text()
-            if t:
-                text += t + "\n"
-            if not photo and len(page.images) > 0:
+            try:
+                t = page.extract_text()
+                if t:
+                    text += t + "\n"
+            except:
+                pass
+            
+            # PDF kilitlenmelerini onleyen guvenli resim tarama
+            if not photo:
                 try:
-                    img_obj = page.images[0]
-                    p_candidate = Image.open(io.BytesIO(img_obj.data)).convert("RGB")
-                    if p_candidate.size[0] > 70 and p_candidate.size[1] > 70:
-                        photo = p_candidate
+                    for img_obj in page.images:
+                        p_candidate = Image.open(io.BytesIO(img_obj.data)).convert("RGB")
+                        if p_candidate.size[0] > 80 and p_candidate.size[1] > 80:
+                            photo = p_candidate
+                            break
                 except:
                     pass
 
@@ -168,6 +174,7 @@ def analyze_cv(api_key, text_content):
     raise last_error
 
 def safe_write(ws, row, column, value, fill=None):
+    """MergedCell (birlestirilmis hucre) hatasini onleyen guvenli hucre yazici"""
     cell = ws.cell(row=row, column=column)
     if type(cell).__name__ == "MergedCell":
         for rng in ws.merged_cells.ranges:
