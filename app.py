@@ -173,7 +173,7 @@ def extract_content(file_bytes, file_name):
     return text, photo
 
 def analyze_cv_with_gemini(api_key, text_content, image=None):
-    genai.configure(api_key=api_key)
+    genai.configure(api_key=api_key.strip(), client_options={"api_endpoint": "generativelanguage.googleapis.com"})
     
     # Doğrudan Google API'nin istediği güncel model adları
     models_to_try = [
