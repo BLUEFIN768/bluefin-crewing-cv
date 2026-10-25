@@ -1,12 +1,12 @@
 import streamlit as st
-import os, io, json, re, datetime, zipfile, subprocess
+import os, io, json, re, datetime, zipfile
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.styles import PatternFill
 from PIL import Image
 import pypdf
 from docx import Document
-import google.generativeai as genai
+from google import genai
 
 st.set_page_config(
     page_title="Bluefin Crewing - Seafarer CV Converter",
@@ -14,54 +14,21 @@ st.set_page_config(
     layout="wide"
 )
 
-TEMPLATE_PATH = os.path.expanduser("~/Desktop/DenizciApp/SEAFARER APPLICATION FORM.xlsx")
+TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 
 SYSTEM_PROMPT = """
 Sen uzman bir crewing (gemi insan kaynakları) veri analistisin. 
-Sana verilen seafarer CV metnini/belgelerini analiz et ve şirketin 'SEAFARER APPLICATION FORM' şablonuna birebir uyacak şekilde aşağıdaki JSON formatında döndür.
+Sana verilen seafarer CV metnini analiz et ve şirketin 'SEAFARER APPLICATION FORM' şablonuna birebir uyacak şekilde aşağıdaki JSON formatında döndür.
 
 KURALLAR:
-1. Rütbeleri (Rank) kesinlikle uluslararası standartlara çevir:
-   - "Güverte Lostroması / Boatswain" -> "Bosun"
-   - "Usta Gemici / Able Seaman" -> "AB"
-   - "Gemici / Ordinary Seaman" -> "OS"
-   - "Başmühendis / Çarkçıbaşı" -> "Chief Engineer"
-   - "1. Zabit / 2. Kaptan" -> "Chief Officer"
-   - "2. Mühendis" -> "2nd Engineer"
-   - "3. Mühendis" -> "3rd Engineer"
-   - "Vardiya Zabiti" -> "2nd Officer" veya "3rd Officer"
-   - "Süvari / Kaptan" -> "Master"
-   - "Fitter / Kaynakçı" -> "Fitter"
-   - "Yağcı" -> "Oiler"
-   - "Elektro-Teknik Tayfası" -> "ETR"
-2. Pasaport ve Liman Cüzdanı numaralarını dikkatli ayıkla. "DETAILS" kelimesini numara sanma; gerçek seri numarasını al. Veriliş (issue) ve Bitiş (expiry) tarihlerini DD.MM.YYYY olarak çıkar.
+1. Rütbeleri (Rank) uluslararası standartlara çevir (Master, Chief Officer, 2nd Officer, Chief Engineer, 2nd Engineer, Bosun, AB, OS, Oiler, Fitter).
+2. Pasaport ve Liman Cüzdanı numaralarını dikkatli ayıkla. Veriliş (issue) ve Bitiş (expiry) tarihlerini DD.MM.YYYY olarak çıkar.
 3. Next of Kin (Acil Yakını): "İsim (Yakınlık) - Telefon - Şehir/Adres" formatında birleştir.
-4. STCW sertifikalarını şablon satır numaralarıyla eşleştir:
-   - 52: Personal Survival Techniques
-   - 53: Fire Prevention and Fire Fighting
-   - 54: Elementary First Aid
-   - 55: Personal Safety and Social Responsibilities (PSSR)
-   - 56: Advanced Fire Fighting
-   - 57: Proficiency in Survival Craft and Rescue Boats
-   - 58: Fast Rescue Boats
-   - 59: Medical First Aid
-   - 60: Medical Care
-   - 61: Security Awareness
-   - 62: Designated Security Duties
-   - 63: Ship Security Officer (SSO)
-   - 67: Leadership and Teamwork
-   - 68: ECDIS
-   - 69: ARPA
-   - 70: Radar
-   - 71: Basic Training Oil and Chemical Tanker
-   - 72: Advanced Oil Tanker
-   - 73: Advanced Chemical Tanker
-   - 82: High Voltage
-   - 86: Security-Related Familiarization
-5. Tarihleri mutlaka DD.MM.YYYY formatına çevir. Bilinmeyen alanları boş string ("") bırak.
+4. STCW sertifikalarını şablon satır numaralarıyla eşleştir (52: PST, 53: Fire Fighting, 54: First Aid, 55: PSSR, 56: Advanced Fire, 57: Survival Craft, 61: Security Awareness, 62: DSD, 63: SSO, 68: ECDIS).
+5. Tarihleri DD.MM.YYYY yap. Bilinmeyen alanları "" bırak.
 
-Çıktıyı SADECE geçerli bir JSON olarak ver (Markdown kod bloğu backtickleri ekleme):
+SADECE geçerli bir JSON döndür:
 {
   "name": "",
   "surname": "",
@@ -140,19 +107,6 @@ def extract_content(file_bytes, file_name):
                     photo = Image.open(io.BytesIO(img_data)).convert("RGB")
         except: pass
 
-    elif ext == ".doc":
-        temp_doc = os.path.expanduser("~/Desktop/DenizciApp/_temp.doc")
-        with open(temp_doc, "wb") as f:
-            f.write(file_bytes)
-        subprocess.run(["textutil", "-convert", "txt", temp_doc, "-output", os.path.expanduser("~/Desktop/DenizciApp/_temp.txt")])
-        txt_path = os.path.expanduser("~/Desktop/DenizciApp/_temp.txt")
-        if os.path.exists(txt_path):
-            with open(txt_path, "r", encoding="utf-8", errors="ignore") as f:
-                text = f.read()
-            os.remove(txt_path)
-        if os.path.exists(temp_doc):
-            os.remove(temp_doc)
-
     elif ext == ".pdf":
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
         for page in reader.pages:
@@ -166,49 +120,19 @@ def extract_content(file_bytes, file_name):
                         photo = p_candidate
                 except: pass
 
-    elif ext in [".jpg", ".jpeg", ".png"]:
-        photo = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-        text = "IMAGE_FILE"
-
     return text, photo
 
-def analyze_cv_with_gemini(api_key, text_content, image=None):
-    genai.configure(api_key=api_key.strip(), client_options={"api_endpoint": "generativelanguage.googleapis.com"})
-    
-    # Doğrudan Google API'nin istediği güncel model adları
-    models_to_try = [
-        "gemini-3.8-flash",
-        "models/gemini-3.8-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash-latest"
-    ]
-    
-    last_err = None
-    for model_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(model_name)
-            content = [SYSTEM_PROMPT]
-            if image and text_content == "IMAGE_FILE":
-                content.append(image)
-                content.append("Bu görseldeki tüm CV verilerini oku ve JSON formatında döndür.")
-            else:
-                content.append(f"Aşağıdaki CV içeriğini analiz et:\n\n{text_content}")
-                if image:
-                    content.append(image)
-
-            response = model.generate_content(content)
-            raw_text = response.text.strip()
-            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-            if match:
-                return json.loads(match.group(0))
-            return json.loads(raw_text)
-        except Exception as e:
-            last_err = e
-            if "404" in str(e):
-                continue
-            raise e
-            
-    raise last_err
+def analyze_cv(api_key, text_content):
+    client = genai.Client(api_key=api_key.strip())
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=f"{SYSTEM_PROMPT}\n\nAşağıdaki CV içeriğini analiz et:\n\n{text_content}",
+    )
+    raw_text = response.text.strip()
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+    if match:
+        return json.loads(match.group(0))
+    return json.loads(raw_text)
 
 def fill_excel_template(data, photo=None):
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
@@ -299,14 +223,13 @@ st.markdown("Personel CV'lerini standart şirket başvuru formuna (**SEAFARER AP
 
 with st.sidebar:
     st.header("🔑 Güvenlik & Ayarlar")
-    api_key = st.text_input("Gemini API Anahtarı:", type="password", help="aistudio.google.com adresinden aldığınız anahtarı buraya girin.")
-    st.info("🔒 Yüklenen CV verileri diskte saklanmaz; bellek üzerinden işlenip Excel'e aktarılır.")
+    api_key = st.text_input("Gemini API Anahtarı:", type="password")
 
 if not api_key:
-    st.warning("Devam etmek için sol menüden Gemini API anahtarınızı girin.")
+    st.warning("Lütfen sol menüden Gemini API anahtarınızı girin.")
     st.stop()
 
-uploaded_file = st.file_uploader("Dönüştürülecek CV'yi Seçin (PDF, Word, DOC, JPG, PNG)", type=["pdf", "docx", "doc", "jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Dönüştürülecek CV'yi Seçin (PDF, Word)", type=["pdf", "docx"])
 
 if uploaded_file is not None:
     file_bytes = uploaded_file.read()
@@ -314,13 +237,13 @@ if uploaded_file is not None:
 
     st.write(f"📁 **Yüklenen Belge:** {file_name}")
     if st.button("🚀 CV'yi Çözümle ve Formu Doldur", type="primary"):
-        with st.spinner("Yapay zeka CV'yi inceliyor, unvan ve sertifikaları eşleştiriyor..."):
+        with st.spinner("Yapay zeka CV'yi inceliyor ve formu dolduruyor..."):
             try:
                 text_content, photo = extract_content(file_bytes, file_name)
-                parsed_data = analyze_cv_with_gemini(api_key, text_content, photo)
+                parsed_data = analyze_cv(api_key, text_content)
                 st.session_state['parsed_data'] = parsed_data
                 st.session_state['photo'] = photo
-                st.success("Çözümleme tamamlandı! Bilgileri kontrol edip Excel dosyanızı indirebilirsiniz.")
+                st.success("Çözümleme tamamlandı!")
             except Exception as e:
                 st.error(f"Hata oluştu: {str(e)}")
 
@@ -334,9 +257,9 @@ if uploaded_file is not None:
         c1, c2, c3 = st.columns([1, 2, 2])
         with c1:
             if photo:
-                st.image(photo, caption="Aday Fotoğrafı (Excel H1'e eklenecek)", width=120)
+                st.image(photo, caption="Aday Fotoğrafı", width=120)
             else:
-                st.info("Vesikalık fotoğraf bulunamadı.")
+                st.info("Fotoğraf bulunamadı.")
         with c2:
             st.text_input("Adı:", value=d.get('name', ''), key="name")
             st.text_input("Soyadı:", value=d.get('surname', ''), key="surname")
