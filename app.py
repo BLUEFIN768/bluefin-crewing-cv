@@ -1,5 +1,5 @@
 import streamlit as st
-import os, io, json, re, datetime, zipfile
+import os, io, json, re, datetime, zipfile, time
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.styles import PatternFill
@@ -144,17 +144,30 @@ def analyze_cv(api_key, text_content):
     prompt = f"{SYSTEM_PROMPT}\n\nAşağıdaki CV içeriğini analiz et:\n\n{text_content}"
     prompt_safe = prompt.encode("utf-8", "ignore").decode("utf-8")
     
-    # 503 aşırı yüklenmelerine karşı en kararlı ve hafif model
-    response = client.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=prompt_safe,
-    )
+    # 503 yoğunluk hatası gelirse otomatik olarak 3 saniye bekleyip 3 kez dener
+    max_retries = 3
+    last_error = None
     
-    raw_text = response.text.strip()
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    return json.loads(raw_text)
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents=prompt_safe,
+            )
+            raw_text = response.text.strip()
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            return json.loads(raw_text)
+        except Exception as e:
+            last_error = e
+            err_msg = str(e)
+            if "503" in err_msg or "UNAVAILABLE" in err_msg:
+                time.sleep(3)
+                continue
+            raise e
+            
+    raise last_error
 
 def fill_excel_template(data, photo=None):
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
