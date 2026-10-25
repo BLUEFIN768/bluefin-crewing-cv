@@ -25,7 +25,17 @@ KURALLAR:
 1. Rütbeleri (Rank) uluslararası standartlara çevir (Master, Chief Officer, 2nd Officer, Chief Engineer, 2nd Engineer, Bosun, AB, OS, Oiler, Fitter).
 2. Pasaport ve Liman Cüzdanı numaralarını dikkatli ayıkla. Veriliş (issue) ve Bitiş (expiry) tarihlerini DD.MM.YYYY olarak çıkar.
 3. Next of Kin (Acil Yakını): "İsim (Yakınlık) - Telefon - Şehir/Adres" formatında birleştir.
-4. STCW sertifikalarını şablon satır numaralarıyla eşleştir (52: PST, 53: Fire Fighting, 54: First Aid, 55: PSSR, 56: Advanced Fire, 57: Survival Craft, 61: Security Awareness, 62: DSD, 63: SSO, 68: ECDIS).
+4. STCW sertifikalarını şablon satır numaralarıyla eşleştir:
+   52: Personal Survival Techniques
+   53: Fire Prevention and Fire Fighting
+   54: Elementary First Aid
+   55: Personal Safety and Social Responsibilities (PSSR)
+   56: Advanced Fire Fighting
+   57: Proficiency in Survival Craft
+   61: Security Awareness
+   62: Designated Security Duties (DSD)
+   63: Ship Security Officer (SSO)
+   68: ECDIS
 5. Tarihleri DD.MM.YYYY yap. Bilinmeyen alanları "" bırak.
 
 SADECE geçerli bir JSON döndür:
@@ -94,45 +104,70 @@ def extract_content(file_bytes, file_name):
     if ext == ".docx":
         doc = Document(io.BytesIO(file_bytes))
         for p in doc.paragraphs:
-            if p.text.strip(): text += p.text + "\n"
+            if p.text.strip():
+                text += p.text + "\n"
         for t in doc.tables:
             for r in t.rows:
                 row_t = " | ".join([c.text.strip().replace('\n', ' ') for c in r.cells if c.text.strip()])
-                if row_t: text += row_t + "\n"
+                if row_t:
+                    text += row_t + "\n"
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
                 imgs = [n for n in z.namelist() if n.startswith('word/media/')]
                 if imgs:
                     img_data = z.read(imgs[0])
                     photo = Image.open(io.BytesIO(img_data)).convert("RGB")
-        except: pass
+        except:
+            pass
 
     elif ext == ".pdf":
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
         for page in reader.pages:
             t = page.extract_text()
-            if t: text += t + "\n"
+            if t:
+                text += t + "\n"
             if not photo and len(page.images) > 0:
                 try:
                     img_obj = page.images[0]
                     p_candidate = Image.open(io.BytesIO(img_obj.data)).convert("RGB")
                     if p_candidate.size[0] > 70 and p_candidate.size[1] > 70:
                         photo = p_candidate
-                except: pass
+                except:
+                    pass
 
     return text, photo
 
 def analyze_cv(api_key, text_content):
-    client = genai.Client(api_key=api_key.strip())
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=f"{SYSTEM_PROMPT}\n\nAşağıdaki CV içeriğini analiz et:\n\n{text_content}",
+    clean_key = api_key.strip()
+    
+    # Interactions ve v1alpha desteği ile istemci kurulumu
+    client = genai.Client(
+        api_key=clean_key,
+        http_options={"api_version": "v1alpha"}
     )
-    raw_text = response.text.strip()
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    return json.loads(raw_text)
+    
+    prompt = f"{SYSTEM_PROMPT}\n\nAşağıdaki CV içeriğini analiz et:\n\n{text_content}"
+    
+    # 503 veya geçici yoğunluklara karşı modeller
+    candidate_models = ["gemini-3.8-flash", "gemini-flash-latest"]
+    
+    last_error = None
+    for model_name in candidate_models:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            raw_text = response.text.strip()
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            return json.loads(raw_text)
+        except Exception as e:
+            last_error = e
+            continue
+            
+    raise last_error
 
 def fill_excel_template(data, photo=None):
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
@@ -188,7 +223,8 @@ def fill_excel_template(data, photo=None):
     for row_str, dates in stcw_data.items():
         try:
             r = int(row_str)
-            if dates.get('issue'): ws.cell(row=r, column=8, value=dates['issue'])
+            if dates.get('issue'):
+                ws.cell(row=r, column=8, value=dates['issue'])
             if dates.get('expiry'):
                 exp_cell = ws.cell(row=r, column=9, value=dates['expiry'])
                 try:
@@ -196,8 +232,10 @@ def fill_excel_template(data, photo=None):
                     if exp_dt < today:
                         exp_cell.fill = RED_FILL
                         ws.cell(row=r, column=8).fill = RED_FILL
-                except: pass
-        except: pass
+                except:
+                    pass
+        except:
+            pass
 
     r_idx = 30
     for exp in data.get('sea_service', []):
