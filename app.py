@@ -139,25 +139,36 @@ def extract_content(file_bytes, file_name):
 
 def analyze_cv(api_key, text_content):
     clean_key = api_key.strip()
-    
-    # Türkçe karakter hatasını önlemek için standart UTF-8 istemci
     client = genai.Client(api_key=clean_key)
     
     prompt = f"{SYSTEM_PROMPT}\n\nAşağıdaki CV içeriğini analiz et:\n\n{text_content}"
-    
-    # Metni UTF-8 olarak güvene al
     prompt_safe = prompt.encode("utf-8", "ignore").decode("utf-8")
     
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=prompt_safe,
-    )
+    # 503 aşırı yoğunluk hatasına karşı sırasıyla denenecek modeller
+    candidate_models = [
+        "gemini-2.5-flash-latest",
+        "gemini-flash-latest",
+        "gemini-3.8-flash",
+        "gemini-2.0-flash-lite"
+    ]
     
-    raw_text = response.text.strip()
-    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-    if match:
-        return json.loads(match.group(0))
-    return json.loads(raw_text)
+    last_error = None
+    for model_name in candidate_models:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt_safe,
+            )
+            raw_text = response.text.strip()
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+            return json.loads(raw_text)
+        except Exception as e:
+            last_error = e
+            continue
+            
+    raise last_error
 
 def fill_excel_template(data, photo=None):
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
