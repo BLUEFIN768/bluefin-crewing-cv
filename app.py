@@ -144,7 +144,6 @@ def analyze_cv(api_key, text_content):
     prompt = f"{SYSTEM_PROMPT}\n\nAşağıdaki CV içeriğini analiz et:\n\n{text_content}"
     prompt_safe = prompt.encode("utf-8", "ignore").decode("utf-8")
     
-    # 503 yoğunluk hatası gelirse otomatik olarak 3 saniye bekleyip 3 kez dener
     max_retries = 3
     last_error = None
     
@@ -169,46 +168,59 @@ def analyze_cv(api_key, text_content):
             
     raise last_error
 
+def safe_write(ws, row, column, value, fill=None):
+    """MergedCell hatasını engelleyen güvenli hücre yazıcı"""
+    cell = ws.cell(row=row, column=column)
+    if type(cell).__name__ == "MergedCell":
+        for rng in ws.merged_cells.ranges:
+            if cell.coordinate in rng:
+                cell = ws.cell(row=rng.min_row, column=rng.min_col)
+                break
+    cell.value = value
+    if fill:
+        cell.fill = fill
+    return cell
+
 def fill_excel_template(data, photo=None):
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
     ws = wb.active
     today = datetime.datetime.now()
 
-    ws.cell(row=7, column=3, value=data.get('name', ''))
-    ws.cell(row=8, column=3, value=data.get('surname', ''))
-    ws.cell(row=9, column=3, value=data.get('rank_applied', ''))
-    ws.cell(row=9, column=8, value=data.get('qualification', ''))
-    ws.cell(row=7, column=8, value=data.get('id_no', ''))
-    ws.cell(row=8, column=8, value=data.get('dob', ''))
-    ws.cell(row=11, column=3, value=data.get('english_level', ''))
-    ws.cell(row=12, column=3, value=data.get('phone', ''))
-    ws.cell(row=12, column=8, value=data.get('phone2', ''))
-    ws.cell(row=13, column=3, value=data.get('email', ''))
-    ws.cell(row=14, column=3, value=data.get('address', ''))
-    ws.cell(row=15, column=3, value=data.get('marital_status', ''))
-    ws.cell(row=15, column=8, value=data.get('children', ''))
-    ws.cell(row=16, column=3, value=data.get('height', ''))
-    ws.cell(row=16, column=8, value=data.get('weight', ''))
-    ws.cell(row=17, column=3, value=data.get('shoes', ''))
-    ws.cell(row=17, column=5, value=data.get('overall', ''))
-    ws.cell(row=18, column=4, value=data.get('next_of_kin', ''))
+    safe_write(ws, 7, 3, data.get('name', ''))
+    safe_write(ws, 8, 3, data.get('surname', ''))
+    safe_write(ws, 9, 3, data.get('rank_applied', ''))
+    safe_write(ws, 9, 8, data.get('qualification', ''))
+    safe_write(ws, 7, 8, data.get('id_no', ''))
+    safe_write(ws, 8, 8, data.get('dob', ''))
+    safe_write(ws, 11, 3, data.get('english_level', ''))
+    safe_write(ws, 12, 3, data.get('phone', ''))
+    safe_write(ws, 12, 8, data.get('phone2', ''))
+    safe_write(ws, 13, 3, data.get('email', ''))
+    safe_write(ws, 14, 3, data.get('address', ''))
+    safe_write(ws, 15, 3, data.get('marital_status', ''))
+    safe_write(ws, 15, 8, data.get('children', ''))
+    safe_write(ws, 16, 3, data.get('height', ''))
+    safe_write(ws, 16, 8, data.get('weight', ''))
+    safe_write(ws, 17, 3, data.get('shoes', ''))
+    safe_write(ws, 17, 5, data.get('overall', ''))
+    safe_write(ws, 18, 4, data.get('next_of_kin', ''))
 
-    ws.cell(row=20, column=5, value=data.get('seaman_book_no', ''))
-    ws.cell(row=20, column=6, value=data.get('seaman_book_issue', ''))
-    ws.cell(row=20, column=8, value=data.get('seaman_book_expiry', ''))
+    safe_write(ws, 20, 5, data.get('seaman_book_no', ''))
+    safe_write(ws, 20, 6, data.get('seaman_book_issue', ''))
+    safe_write(ws, 20, 8, data.get('seaman_book_expiry', ''))
 
-    ws.cell(row=21, column=5, value=data.get('passport_no', ''))
-    ws.cell(row=21, column=6, value=data.get('passport_issue', ''))
-    ws.cell(row=21, column=8, value=data.get('passport_expiry', ''))
+    safe_write(ws, 21, 5, data.get('passport_no', ''))
+    safe_write(ws, 21, 6, data.get('passport_issue', ''))
+    safe_write(ws, 21, 8, data.get('passport_expiry', ''))
 
-    ws.cell(row=22, column=6, value=data.get('medical_issue', ''))
-    ws.cell(row=22, column=8, value=data.get('medical_expiry', ''))
+    safe_write(ws, 22, 6, data.get('medical_issue', ''))
+    safe_write(ws, 22, 8, data.get('medical_expiry', ''))
 
-    ws.cell(row=23, column=6, value=data.get('yellow_fever_issue', ''))
-    ws.cell(row=23, column=8, value=data.get('yellow_fever_expiry', ''))
+    safe_write(ws, 23, 6, data.get('yellow_fever_issue', ''))
+    safe_write(ws, 23, 8, data.get('yellow_fever_expiry', ''))
 
-    ws.cell(row=24, column=5, value=data.get('usa_visa', ''))
-    ws.cell(row=25, column=5, value=data.get('schengen_visa', ''))
+    safe_write(ws, 24, 5, data.get('usa_visa', ''))
+    safe_write(ws, 25, 5, data.get('schengen_visa', ''))
 
     if photo:
         photo_buf = io.BytesIO()
@@ -224,30 +236,33 @@ def fill_excel_template(data, photo=None):
         try:
             r = int(row_str)
             if dates.get('issue'):
-                ws.cell(row=r, column=8, value=dates['issue'])
+                safe_write(ws, r, 8, dates['issue'])
             if dates.get('expiry'):
-                exp_cell = ws.cell(row=r, column=9, value=dates['expiry'])
+                is_expired = False
                 try:
                     exp_dt = datetime.datetime.strptime(dates['expiry'].replace('/', '.').replace('-', '.'), "%d.%m.%Y")
                     if exp_dt < today:
-                        exp_cell.fill = RED_FILL
-                        ws.cell(row=r, column=8).fill = RED_FILL
+                        is_expired = True
                 except:
                     pass
+                fill_to_apply = RED_FILL if is_expired else None
+                safe_write(ws, r, 9, dates['expiry'], fill=fill_to_apply)
+                if is_expired:
+                    safe_write(ws, r, 8, dates.get('issue', ''), fill=RED_FILL)
         except:
             pass
 
     r_idx = 30
     for exp in data.get('sea_service', []):
-        ws.cell(row=r_idx, column=1, value=exp.get('vsl_type', ''))
-        ws.cell(row=r_idx, column=2, value=exp.get('vsl_name', ''))
-        ws.cell(row=r_idx, column=3, value=exp.get('company', ''))
-        ws.cell(row=r_idx, column=4, value=exp.get('rank', ''))
-        ws.cell(row=r_idx, column=5, value=exp.get('dwt', ''))
-        ws.cell(row=r_idx, column=6, value=exp.get('engine_type', ''))
-        ws.cell(row=r_idx, column=7, value=exp.get('sign_on', ''))
-        ws.cell(row=r_idx, column=8, value=exp.get('sign_off', ''))
-        ws.cell(row=r_idx, column=9, value=exp.get('reason', ''))
+        safe_write(ws, r_idx, 1, exp.get('vsl_type', ''))
+        safe_write(ws, r_idx, 2, exp.get('vsl_name', ''))
+        safe_write(ws, r_idx, 3, exp.get('company', ''))
+        safe_write(ws, r_idx, 4, exp.get('rank', ''))
+        safe_write(ws, r_idx, 5, exp.get('dwt', ''))
+        safe_write(ws, r_idx, 6, exp.get('engine_type', ''))
+        safe_write(ws, r_idx, 7, exp.get('sign_on', ''))
+        safe_write(ws, r_idx, 8, exp.get('sign_off', ''))
+        safe_write(ws, r_idx, 9, exp.get('reason', ''))
         r_idx += 1
 
     out_stream = io.BytesIO()
