@@ -184,13 +184,15 @@ def extract_content(file_bytes, file_name):
 def analyze_cv_with_gemini(api_key, text_content, image=None):
     genai.configure(api_key=api_key)
     
+   def analyze_cv_with_gemini(api_key, text_content, image=None):
+    genai.configure(api_key=api_key)
+    
     selected_model = "gemini-2.5-flash"
     try:
         models = [m.name for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
         for candidate in ["models/gemini-2.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-flash"]:
             if candidate in models:
                 selected_model = candidate
-                break
     except: pass
 
     model = genai.GenerativeModel(selected_model)
