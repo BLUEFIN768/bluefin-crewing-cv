@@ -125,7 +125,7 @@ def extract_content(file_bytes, file_name):
 def analyze_cv(api_key, text_content):
     client = genai.Client(api_key=api_key.strip())
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=f"{SYSTEM_PROMPT}\n\nAşağıdaki CV içeriğini analiz et:\n\n{text_content}",
     )
     raw_text = response.text.strip()
