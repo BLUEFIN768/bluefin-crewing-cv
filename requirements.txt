@@ -1,6 +1,6 @@
 streamlit
-google-genai
 openpyxl
 Pillow
 pypdf
 python-docx
+google-genai
