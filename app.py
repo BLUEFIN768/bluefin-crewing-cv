@@ -1,5 +1,6 @@
 import streamlit as st
 import os, io, json, re, datetime, zipfile, time
+import socket
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.styles import PatternFill
@@ -7,6 +8,9 @@ from PIL import Image
 import pypdf
 from docx import Document
 from google import genai
+
+# API kilitlenmelerini onlemek icin genel 30 saniye zaman asimi siniri
+socket.setdefaulttimeout(30)
 
 st.set_page_config(
     page_title="Bluefin Crewing - Seafarer CV Converter",
@@ -128,8 +132,6 @@ def extract_content(file_bytes, file_name):
                     text += t + "\n"
             except:
                 pass
-            
-            # PDF kilitlenmelerini onleyen guvenli resim tarama
             if not photo:
                 try:
                     for img_obj in page.images:
@@ -149,29 +151,18 @@ def analyze_cv(api_key, text_content):
     prompt = f"{SYSTEM_PROMPT}\n\nAsagidaki CV icerigini analiz et:\n\n{text_content}"
     prompt_safe = prompt.encode("ascii", "ignore").decode("ascii")
     
-    max_retries = 3
-    last_error = None
-    
-    for attempt in range(max_retries):
-        try:
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt_safe,
-            )
-            raw_text = response.text.strip()
-            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-            if match:
-                return json.loads(match.group(0))
-            return json.loads(raw_text)
-        except Exception as e:
-            last_error = e
-            err_msg = str(e)
-            if "503" in err_msg or "UNAVAILABLE" in err_msg:
-                time.sleep(3)
-                continue
-            raise e
-            
-    raise last_error
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.8-flash",
+            contents=prompt_safe,
+        )
+        raw_text = response.text.strip()
+        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        return json.loads(raw_text)
+    except Exception as e:
+        raise Exception(f"API Yanit Hatasi: {str(e)}")
 
 def safe_write(ws, row, column, value, fill=None):
     """MergedCell (birlestirilmis hucre) hatasini onleyen guvenli hucre yazici"""
@@ -294,7 +285,7 @@ if uploaded_file is not None:
 
     st.write(f"Yuklenen Belge: {file_name}")
     if st.button("CV yi Cozumle ve Formu Doldur", type="primary"):
-        with st.spinner("Yapay zeka CV yi inceliyor ve formu dolduruyor..."):
+        with st.spinner("Yapay zeka CV'yi inceliyor (Güncel Sürüm)..."):
             try:
                 text_content, photo = extract_content(file_bytes, file_name)
                 parsed_data = analyze_cv(api_key, text_content)
