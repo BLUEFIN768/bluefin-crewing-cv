@@ -17,6 +17,10 @@ st.set_page_config(
     layout="wide"
 )
 
+# Sayac icin session state baslatma
+if 'api_counter' not in st.session_state:
+    st.session_state['api_counter'] = 0
+
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -26,23 +30,17 @@ Sen uzman bir crewing (gemi insan kaynaklari) veri analistisin.
 Sana verilen seafarer CV metnini analiz et ve sirketin 'SEAFARER APPLICATION FORM' sablonuna birebir uyacak sekilde asagidaki JSON formatinda dondur.
 
 KURALLAR:
-1. Rutbeleri (Rank) uluslararasi standartlara cevir (Master, Chief Officer, 2nd Officer, Chief Engineer, 2nd Engineer, Bosun, AB, OS, Oiler, Fitter).
-2. Pasaport ve Liman Cuzdani numaralarini dikkatli ayikla. Verilis (issue) ve Bitis (expiry) tarihlerini DD.MM.YYYY olarak cikar.
+1. Rutbeleri (Rank) uluslararasi standartlara cevir.
+2. Pasaport ve Liman Cuzdani numaralarini, issue/expiry tarihlerini (DD.MM.YYYY) cikar.
 3. Next of Kin (Acil Yakini): "Isim (Yakinlik) - Telefon - Sehir/Adres" formatinda birlestir.
-4. STCW sertifikalarini sablon satir numaralariyla eslestir:
-   52: Personal Survival Techniques
-   53: Fire Prevention and Fire Fighting
-   54: Elementary First Aid
-   55: Personal Safety and Social Responsibilities (PSSR)
-   56: Advanced Fire Fighting
-   57: Proficiency in Survival Craft
-   61: Security Awareness
-   62: Designated Security Duties (DSD)
-   63: Ship Security Officer (SSO)
-   68: ECDIS
+4. STCW sertifikalarini sablon satir numaralariyla eslestir.
 5. Tarihleri DD.MM.YYYY yap. Bilinmeyen alanlari "" birak.
-6. GUVENLIK KURALI: Eger bir bilginin (tarih, numara, isim vb.) CV'de karsiligi net degilse, eksikse, formatindan emin degilsen veya tahminde bulunduysan, o alanin JSON anahtar kelimesini "uncertain_fields" dizisine ekle. Tamamen eminsen bu diziyi bos birak [].
-7. SIRALAMA KURALI: "sea_service" (deniz hizmeti) dizisini EN GUNCEL (EN YENI) tecrube ilk sirada (en ustte), en eski tecrube son sirada (en altta) olacak sekilde ters kronolojik olarak sirala.
+6. GUVENLIK KURALI: CV'de karsiligi net degilse, okuyamadiysan veya tahminde bulunduysan, o alanin anahtar kelimesini "uncertain_fields" dizisine ekle.
+7. SIRALAMA KURALI: "sea_service" dizisini EN GUNCEL (EN YENI) tecrube en ustte olacak sekilde ters kronolojik olarak sirala.
+8. HIZMET SURESI KONTROLU (ONEMLI): Sign-on ve Sign-off tarihlerini karsilastirarak kisinin gemide kac ay kaldigini hesapla. 
+   - Eger personel ZABIT (Officer, Master, Chief Engineer, 2nd Engineer, 3rd Engineer vb.) ise ve hizmet 4 aydan kisaysa veya 10 aydan uzunsa,
+   - Eger personel RATING (Fitter, AB, OS, Bosun, Oiler, Cook vb.) ise ve hizmet 6 aydan kisaysa veya 12 aydan uzunsa,
+   Bu anormallikleri "warnings" dizisine su formatta ekle: "[Gemi Adi] - Anormal Hizmet Suresi: X Ay (Sebep: Y)". Eger hizmet sureleri normalse bu diziyi bos birak [].
 
 SADECE gecerli bir JSON dondur:
 {
@@ -99,7 +97,8 @@ SADECE gecerli bir JSON dondur:
     "62": {"issue": "", "expiry": ""},
     "63": {"issue": "", "expiry": ""}
   },
-  "uncertain_fields": []
+  "uncertain_fields": [],
+  "warnings": []
 }
 """
 
@@ -249,7 +248,6 @@ def fill_excel_template(data, photo=None):
                         is_expired = True
                 except:
                     pass
-                
                 fill_to_apply = RED_FILL if is_expired else get_fill('stcw_certificates')
                 safe_write(ws, r, 9, dates['expiry'], fill=fill_to_apply)
                 if is_expired:
@@ -277,11 +275,14 @@ def fill_excel_template(data, photo=None):
     return out_stream
 
 st.title("Bluefin Crewing - Otomatik CV Donusturucu")
-st.markdown("Personel CV lerini standart sirket basvuru formuna (SEAFARER APPLICATION FORM.xlsx) aktarin.")
+st.markdown("Personel CV'lerini standart sirket basvuru formuna (SEAFARER APPLICATION FORM.xlsx) aktarin.")
 
 with st.sidebar:
-    st.header("Guvenlik ve Ayarlar")
+    st.header("🔑 Güvenlik & Ayarlar")
     api_key = st.text_input("Gemini API Anahtari:", type="password")
+    st.divider()
+    st.info(f"📊 **Bu Oturumdaki Başarılı Çeviri:** {st.session_state['api_counter']} / 20")
+    st.caption("Not: Ekipteki herkes kendi API anahtariyla giris yapabilir. Anahtarlar ve yuklenen belgeler birbirine karismaz.")
 
 if not api_key:
     st.warning("Lutfen sol menuden Gemini API anahtarinizi girin.")
@@ -293,20 +294,20 @@ if uploaded_file is not None:
     file_bytes = uploaded_file.read()
     file_name = uploaded_file.name
 
-    st.write(f"Yuklenen Belge: {file_name}")
-    if st.button("CV yi Cozumle ve Formu Doldur", type="primary"):
-        with st.spinner("Yapay zeka CV'yi inceliyor (Güvenlik Modu & Sıralama Aktif)..."):
+    st.write(f"📁 **Yuklenen Belge:** {file_name}")
+    if st.button("🚀 CV'yi Çözümle ve Formu Doldur", type="primary"):
+        with st.spinner("Yapay zeka CV'yi inceliyor (Hizmet Süresi & Güvenlik Modu Aktif)..."):
             try:
                 text_content, photo = extract_content(file_bytes, file_name)
                 parsed_data = analyze_cv(api_key, text_content)
                 st.session_state['parsed_data'] = parsed_data
                 st.session_state['photo'] = photo
                 
-                if parsed_data.get('uncertain_fields'):
-                    st.warning(f"⚠️ Yapay Zeka bazi alanlardan tam emin degil. Bu alanlar Excel'de SARI ile isaretlendi: {', '.join(parsed_data['uncertain_fields'])}")
-                else:
-                    st.success("Cozumleme tamamlandi! Tum veriler net.")
-                    
+                # Basarili islem sayacini artir
+                st.session_state['api_counter'] += 1
+                
+                st.success("Çözümleme tamamlandı!")
+                
             except Exception as e:
                 st.error(f"Hata olustu: {str(e)}")
 
@@ -315,7 +316,17 @@ if uploaded_file is not None:
         photo = st.session_state.get('photo', None)
 
         st.divider()
-        st.subheader("Cikarilan Bilgiler ve Onizleme")
+        
+        # Hizmet Suresi Uyarilari (Kirmizi Banner)
+        if d.get('warnings'):
+            for warning in d['warnings']:
+                st.error(f"🚨 **DİKKAT (Hizmet Süresi Anormalliği):** {warning}")
+                
+        # Belirsiz Alan Uyarilari (Sari Banner)
+        if d.get('uncertain_fields'):
+            st.warning(f"⚠️ **GÖZDEN GEÇİRİN:** Yapay Zeka bazı alanları net okuyamadı. Bu alanlar Excel'de SARI ile işaretlendi: {', '.join(d['uncertain_fields'])}")
+            
+        st.subheader("📋 Çıkarılan Bilgiler ve Önizleme")
 
         c1, c2, c3 = st.columns([1, 2, 2])
         with c1:
@@ -335,10 +346,15 @@ if uploaded_file is not None:
             st.text_input("Acil Durum Yakini:", value=d.get('next_of_kin', ''), key="kin")
 
         excel_data = fill_excel_template(d, photo)
-        out_filename = f"Doldurulan_{d.get('name', 'Seafarer')}_{d.get('surname', 'CV')}.xlsx"
+        
+        # Dosya adina rutbe ekleme (Klasorleme kolayligi icin)
+        safe_rank = str(d.get('rank_applied', 'Bilinmeyen_Rutbe')).replace('/', '_').replace(' ', '_').upper()
+        safe_name = str(d.get('name', 'Seafarer')).replace(' ', '_').upper()
+        safe_surname = str(d.get('surname', 'CV')).replace(' ', '_').upper()
+        out_filename = f"{safe_rank}_{safe_name}_{safe_surname}.xlsx"
 
         st.download_button(
-            label="Doldurulmus SEAFARER APPLICATION FORM.xlsx Indir",
+            label=f"📥 İNDİR: {out_filename}",
             data=excel_data,
             file_name=out_filename,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
