@@ -42,6 +42,7 @@ KURALLAR:
    68: ECDIS
 5. Tarihleri DD.MM.YYYY yap. Bilinmeyen alanlari "" birak.
 6. GUVENLIK KURALI: Eger bir bilginin (tarih, numara, isim vb.) CV'de karsiligi net degilse, eksikse, formatindan emin degilsen veya tahminde bulunduysan, o alanin JSON anahtar kelimesini "uncertain_fields" dizisine ekle. Tamamen eminsen bu diziyi bos birak [].
+7. SIRALAMA KURALI: "sea_service" (deniz hizmeti) dizisini EN GUNCEL (EN YENI) tecrube ilk sirada (en ustte), en eski tecrube son sirada (en altta) olacak sekilde ters kronolojik olarak sirala.
 
 SADECE gecerli bir JSON dondur:
 {
@@ -249,7 +250,6 @@ def fill_excel_template(data, photo=None):
                 except:
                     pass
                 
-                # Suresi gecmisse kirmizi, emin degilse sari, ikisi de degilse bos
                 fill_to_apply = RED_FILL if is_expired else get_fill('stcw_certificates')
                 safe_write(ws, r, 9, dates['expiry'], fill=fill_to_apply)
                 if is_expired:
@@ -295,14 +295,13 @@ if uploaded_file is not None:
 
     st.write(f"Yuklenen Belge: {file_name}")
     if st.button("CV yi Cozumle ve Formu Doldur", type="primary"):
-        with st.spinner("Yapay zeka CV'yi inceliyor (Güvenlik Modu Aktif)..."):
+        with st.spinner("Yapay zeka CV'yi inceliyor (Güvenlik Modu & Sıralama Aktif)..."):
             try:
                 text_content, photo = extract_content(file_bytes, file_name)
                 parsed_data = analyze_cv(api_key, text_content)
                 st.session_state['parsed_data'] = parsed_data
                 st.session_state['photo'] = photo
                 
-                # Ekranda uyari gosterme
                 if parsed_data.get('uncertain_fields'):
                     st.warning(f"⚠️ Yapay Zeka bazi alanlardan tam emin degil. Bu alanlar Excel'de SARI ile isaretlendi: {', '.join(parsed_data['uncertain_fields'])}")
                 else:
