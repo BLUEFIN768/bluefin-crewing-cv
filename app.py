@@ -19,6 +19,7 @@ st.set_page_config(
 
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
+YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
 SYSTEM_PROMPT = """
 Sen uzman bir crewing (gemi insan kaynaklari) veri analistisin. 
@@ -40,6 +41,7 @@ KURALLAR:
    63: Ship Security Officer (SSO)
    68: ECDIS
 5. Tarihleri DD.MM.YYYY yap. Bilinmeyen alanlari "" birak.
+6. GUVENLIK KURALI: Eger bir bilginin (tarih, numara, isim vb.) CV'de karsiligi net degilse, eksikse, formatindan emin degilsen veya tahminde bulunduysan, o alanin JSON anahtar kelimesini "uncertain_fields" dizisine ekle. Tamamen eminsen bu diziyi bos birak [].
 
 SADECE gecerli bir JSON dondur:
 {
@@ -95,7 +97,8 @@ SADECE gecerli bir JSON dondur:
     "61": {"issue": "", "expiry": ""},
     "62": {"issue": "", "expiry": ""},
     "63": {"issue": "", "expiry": ""}
-  }
+  },
+  "uncertain_fields": []
 }
 """
 
@@ -165,7 +168,6 @@ def analyze_cv(api_key, text_content):
         raise Exception(f"API Yanit Hatasi: {str(e)}")
 
 def safe_write(ws, row, column, value, fill=None):
-    """MergedCell (birlestirilmis hucre) hatasini onleyen guvenli hucre yazici"""
     cell = ws.cell(row=row, column=column)
     if type(cell).__name__ == "MergedCell":
         for rng in ws.merged_cells.ranges:
@@ -181,42 +183,47 @@ def fill_excel_template(data, photo=None):
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
     ws = wb.active
     today = datetime.datetime.now()
+    
+    uncertain_keys = data.get('uncertain_fields', [])
+    
+    def get_fill(field_name):
+        return YELLOW_FILL if field_name in uncertain_keys else None
 
-    safe_write(ws, 7, 3, data.get('name', ''))
-    safe_write(ws, 8, 3, data.get('surname', ''))
-    safe_write(ws, 9, 3, data.get('rank_applied', ''))
-    safe_write(ws, 9, 8, data.get('qualification', ''))
-    safe_write(ws, 7, 8, data.get('id_no', ''))
-    safe_write(ws, 8, 8, data.get('dob', ''))
-    safe_write(ws, 11, 3, data.get('english_level', ''))
-    safe_write(ws, 12, 3, data.get('phone', ''))
-    safe_write(ws, 12, 8, data.get('phone2', ''))
-    safe_write(ws, 13, 3, data.get('email', ''))
-    safe_write(ws, 14, 3, data.get('address', ''))
-    safe_write(ws, 15, 3, data.get('marital_status', ''))
-    safe_write(ws, 15, 8, data.get('children', ''))
-    safe_write(ws, 16, 3, data.get('height', ''))
-    safe_write(ws, 16, 8, data.get('weight', ''))
-    safe_write(ws, 17, 3, data.get('shoes', ''))
-    safe_write(ws, 17, 5, data.get('overall', ''))
-    safe_write(ws, 18, 4, data.get('next_of_kin', ''))
+    safe_write(ws, 7, 3, data.get('name', ''), fill=get_fill('name'))
+    safe_write(ws, 8, 3, data.get('surname', ''), fill=get_fill('surname'))
+    safe_write(ws, 9, 3, data.get('rank_applied', ''), fill=get_fill('rank_applied'))
+    safe_write(ws, 9, 8, data.get('qualification', ''), fill=get_fill('qualification'))
+    safe_write(ws, 7, 8, data.get('id_no', ''), fill=get_fill('id_no'))
+    safe_write(ws, 8, 8, data.get('dob', ''), fill=get_fill('dob'))
+    safe_write(ws, 11, 3, data.get('english_level', ''), fill=get_fill('english_level'))
+    safe_write(ws, 12, 3, data.get('phone', ''), fill=get_fill('phone'))
+    safe_write(ws, 12, 8, data.get('phone2', ''), fill=get_fill('phone2'))
+    safe_write(ws, 13, 3, data.get('email', ''), fill=get_fill('email'))
+    safe_write(ws, 14, 3, data.get('address', ''), fill=get_fill('address'))
+    safe_write(ws, 15, 3, data.get('marital_status', ''), fill=get_fill('marital_status'))
+    safe_write(ws, 15, 8, data.get('children', ''), fill=get_fill('children'))
+    safe_write(ws, 16, 3, data.get('height', ''), fill=get_fill('height'))
+    safe_write(ws, 16, 8, data.get('weight', ''), fill=get_fill('weight'))
+    safe_write(ws, 17, 3, data.get('shoes', ''), fill=get_fill('shoes'))
+    safe_write(ws, 17, 5, data.get('overall', ''), fill=get_fill('overall'))
+    safe_write(ws, 18, 4, data.get('next_of_kin', ''), fill=get_fill('next_of_kin'))
 
-    safe_write(ws, 20, 5, data.get('seaman_book_no', ''))
-    safe_write(ws, 20, 6, data.get('seaman_book_issue', ''))
-    safe_write(ws, 20, 8, data.get('seaman_book_expiry', ''))
+    safe_write(ws, 20, 5, data.get('seaman_book_no', ''), fill=get_fill('seaman_book_no'))
+    safe_write(ws, 20, 6, data.get('seaman_book_issue', ''), fill=get_fill('seaman_book_issue'))
+    safe_write(ws, 20, 8, data.get('seaman_book_expiry', ''), fill=get_fill('seaman_book_expiry'))
 
-    safe_write(ws, 21, 5, data.get('passport_no', ''))
-    safe_write(ws, 21, 6, data.get('passport_issue', ''))
-    safe_write(ws, 21, 8, data.get('passport_expiry', ''))
+    safe_write(ws, 21, 5, data.get('passport_no', ''), fill=get_fill('passport_no'))
+    safe_write(ws, 21, 6, data.get('passport_issue', ''), fill=get_fill('passport_issue'))
+    safe_write(ws, 21, 8, data.get('passport_expiry', ''), fill=get_fill('passport_expiry'))
 
-    safe_write(ws, 22, 6, data.get('medical_issue', ''))
-    safe_write(ws, 22, 8, data.get('medical_expiry', ''))
+    safe_write(ws, 22, 6, data.get('medical_issue', ''), fill=get_fill('medical_issue'))
+    safe_write(ws, 22, 8, data.get('medical_expiry', ''), fill=get_fill('medical_expiry'))
 
-    safe_write(ws, 23, 6, data.get('yellow_fever_issue', ''))
-    safe_write(ws, 23, 8, data.get('yellow_fever_expiry', ''))
+    safe_write(ws, 23, 6, data.get('yellow_fever_issue', ''), fill=get_fill('yellow_fever_issue'))
+    safe_write(ws, 23, 8, data.get('yellow_fever_expiry', ''), fill=get_fill('yellow_fever_expiry'))
 
-    safe_write(ws, 24, 5, data.get('usa_visa', ''))
-    safe_write(ws, 25, 5, data.get('schengen_visa', ''))
+    safe_write(ws, 24, 5, data.get('usa_visa', ''), fill=get_fill('usa_visa'))
+    safe_write(ws, 25, 5, data.get('schengen_visa', ''), fill=get_fill('schengen_visa'))
 
     if photo:
         photo_buf = io.BytesIO()
@@ -232,7 +239,7 @@ def fill_excel_template(data, photo=None):
         try:
             r = int(row_str)
             if dates.get('issue'):
-                safe_write(ws, r, 8, dates['issue'])
+                safe_write(ws, r, 8, dates['issue'], fill=get_fill('stcw_certificates'))
             if dates.get('expiry'):
                 is_expired = False
                 try:
@@ -241,7 +248,9 @@ def fill_excel_template(data, photo=None):
                         is_expired = True
                 except:
                     pass
-                fill_to_apply = RED_FILL if is_expired else None
+                
+                # Suresi gecmisse kirmizi, emin degilse sari, ikisi de degilse bos
+                fill_to_apply = RED_FILL if is_expired else get_fill('stcw_certificates')
                 safe_write(ws, r, 9, dates['expiry'], fill=fill_to_apply)
                 if is_expired:
                     safe_write(ws, r, 8, dates.get('issue', ''), fill=RED_FILL)
@@ -250,15 +259,16 @@ def fill_excel_template(data, photo=None):
 
     r_idx = 30
     for exp in data.get('sea_service', []):
-        safe_write(ws, r_idx, 1, exp.get('vsl_type', ''))
-        safe_write(ws, r_idx, 2, exp.get('vsl_name', ''))
-        safe_write(ws, r_idx, 3, exp.get('company', ''))
-        safe_write(ws, r_idx, 4, exp.get('rank', ''))
-        safe_write(ws, r_idx, 5, exp.get('dwt', ''))
-        safe_write(ws, r_idx, 6, exp.get('engine_type', ''))
-        safe_write(ws, r_idx, 7, exp.get('sign_on', ''))
-        safe_write(ws, r_idx, 8, exp.get('sign_off', ''))
-        safe_write(ws, r_idx, 9, exp.get('reason', ''))
+        row_fill = get_fill('sea_service')
+        safe_write(ws, r_idx, 1, exp.get('vsl_type', ''), fill=row_fill)
+        safe_write(ws, r_idx, 2, exp.get('vsl_name', ''), fill=row_fill)
+        safe_write(ws, r_idx, 3, exp.get('company', ''), fill=row_fill)
+        safe_write(ws, r_idx, 4, exp.get('rank', ''), fill=row_fill)
+        safe_write(ws, r_idx, 5, exp.get('dwt', ''), fill=row_fill)
+        safe_write(ws, r_idx, 6, exp.get('engine_type', ''), fill=row_fill)
+        safe_write(ws, r_idx, 7, exp.get('sign_on', ''), fill=row_fill)
+        safe_write(ws, r_idx, 8, exp.get('sign_off', ''), fill=row_fill)
+        safe_write(ws, r_idx, 9, exp.get('reason', ''), fill=row_fill)
         r_idx += 1
 
     out_stream = io.BytesIO()
@@ -285,13 +295,19 @@ if uploaded_file is not None:
 
     st.write(f"Yuklenen Belge: {file_name}")
     if st.button("CV yi Cozumle ve Formu Doldur", type="primary"):
-        with st.spinner("Yapay zeka CV'yi inceliyor (Güncel Sürüm)..."):
+        with st.spinner("Yapay zeka CV'yi inceliyor (Güvenlik Modu Aktif)..."):
             try:
                 text_content, photo = extract_content(file_bytes, file_name)
                 parsed_data = analyze_cv(api_key, text_content)
                 st.session_state['parsed_data'] = parsed_data
                 st.session_state['photo'] = photo
-                st.success("Cozumleme tamamlandi!")
+                
+                # Ekranda uyari gosterme
+                if parsed_data.get('uncertain_fields'):
+                    st.warning(f"⚠️ Yapay Zeka bazi alanlardan tam emin degil. Bu alanlar Excel'de SARI ile isaretlendi: {', '.join(parsed_data['uncertain_fields'])}")
+                else:
+                    st.success("Cozumleme tamamlandi! Tum veriler net.")
+                    
             except Exception as e:
                 st.error(f"Hata olustu: {str(e)}")
 
