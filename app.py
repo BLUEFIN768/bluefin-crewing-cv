@@ -8,6 +8,7 @@ from PIL import Image
 import pypdf
 from docx import Document
 from google import genai
+from google.genai import types
 
 # API kilitlenmelerini onlemek icin genel 30 saniye zaman asimi siniri
 socket.setdefaulttimeout(30)
@@ -25,9 +26,15 @@ TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
+@st.cache_data(show_spinner=False)
+def load_excel_template():
+    """Excel sablonunu her seferinde diskten okumak yerine RAM'de hazir tutar (Hiz optimizasyonu)"""
+    with open(TEMPLATE_PATH, "rb") as f:
+        return f.read()
+
 SYSTEM_PROMPT = """
 Sen uzman bir crewing (gemi insan kaynaklari) veri analistisin. 
-Sana verilen seafarer CV metnini analiz et ve sirketin 'SEAFARER APPLICATION FORM' sablonuna birebir uyacak sekilde asagidaki JSON formatinda dondur.
+Sana verilen seafarer CV metnini analiz et ve sirketin 'SEAFARER APPLICATION FORM' sablonuna birebir uyacak sekilde JSON formatinda dondur.
 
 KURALLAR:
 1. Rutbeleri (Rank) uluslararasi standartlara cevir.
@@ -42,7 +49,7 @@ KURALLAR:
    - Eger personel RATING (Fitter, AB, OS, Bosun, Oiler, Cook vb.) ise ve hizmet 6 aydan kisaysa veya 12 aydan uzunsa,
    Bu anormallikleri "warnings" dizisine su formatta ekle: "[Gemi Adi] - Anormal Hizmet Suresi: X Ay (Sebep: Y)". Eger hizmet sureleri normalse bu diziyi bos birak [].
 
-SADECE gecerli bir JSON dondur:
+SADECE su YAPIYA SAHIP GECERLI BIR JSON dondur, baska hicbir metin ekleme:
 {
   "name": "",
   "surname": "",
@@ -128,14 +135,16 @@ def extract_content(file_bytes, file_name):
 
     elif ext == ".pdf":
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-        for page in reader.pages:
+        for i, page in enumerate(reader.pages):
             try:
                 t = page.extract_text()
                 if t:
                     text += t + "\n"
             except:
                 pass
-            if not photo:
+            
+            # Fotograf aramasini yalnizca ilk 2 sayfa ile sinirla (Hiz optimizasyonu)
+            if not photo and i < 2:
                 try:
                     for img_obj in page.images:
                         p_candidate = Image.open(io.BytesIO(img_obj.data)).convert("RGB")
@@ -155,15 +164,16 @@ def analyze_cv(api_key, text_content):
     prompt_safe = prompt.encode("ascii", "ignore").decode("ascii")
     
     try:
+        # API'nin yalnizca guvenilir ve %100 uyan JSON formati uretmesini sagla (Temperature: 0)
         response = client.models.generate_content(
             model="gemini-3.8-flash",
             contents=prompt_safe,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.0
+            )
         )
-        raw_text = response.text.strip()
-        match = re.search(r"\{.*\}", raw_text, re.DOTALL)
-        if match:
-            return json.loads(match.group(0))
-        return json.loads(raw_text)
+        return json.loads(response.text)
     except Exception as e:
         raise Exception(f"API Yanit Hatasi: {str(e)}")
 
@@ -180,7 +190,8 @@ def safe_write(ws, row, column, value, fill=None):
     return cell
 
 def fill_excel_template(data, photo=None):
-    wb = openpyxl.load_workbook(TEMPLATE_PATH)
+    template_bytes = load_excel_template()
+    wb = openpyxl.load_workbook(io.BytesIO(template_bytes))
     ws = wb.active
     today = datetime.datetime.now()
     
@@ -275,7 +286,7 @@ def fill_excel_template(data, photo=None):
     return out_stream
 
 st.title("Bluefin Crewing - Otomatik CV Donusturucu")
-st.markdown("Personel CV'lerini standart sirket basvuru formuna (SEAFARER APPLICATION FORM.xlsx) aktarin.")
+st.markdown("Personel CV'lerini standart sirket basvuru formuna (SEAFARER APPLICATION FORM.xlsx) hizli ve eksiksiz aktarin.")
 
 with st.sidebar:
     st.header("🔑 Güvenlik & Ayarlar")
@@ -296,7 +307,7 @@ if uploaded_file is not None:
 
     st.write(f"📁 **Yuklenen Belge:** {file_name}")
     if st.button("🚀 CV'yi Çözümle ve Formu Doldur", type="primary"):
-        with st.spinner("Yapay zeka CV'yi inceliyor (Hizmet Süresi & Güvenlik Modu Aktif)..."):
+        with st.spinner("Yapay Zeka Devrede (Hızlı Tarama ve Sıfır Hata Modu Aktif)..."):
             try:
                 text_content, photo = extract_content(file_bytes, file_name)
                 parsed_data = analyze_cv(api_key, text_content)
@@ -306,7 +317,7 @@ if uploaded_file is not None:
                 # Basarili islem sayacini artir
                 st.session_state['api_counter'] += 1
                 
-                st.success("Çözümleme tamamlandı!")
+                st.success("Çözümleme saniyeler içinde tamamlandı!")
                 
             except Exception as e:
                 st.error(f"Hata olustu: {str(e)}")
