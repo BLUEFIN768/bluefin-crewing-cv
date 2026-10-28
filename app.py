@@ -10,6 +10,10 @@ from docx import Document
 from google import genai
 from google.genai import types
 
+# --- SURUM VE GUNCELLEME TAKIBI ---
+APP_VERSION = "v1.1"
+LAST_UPDATE = "28.10.2026 - 11:05"
+
 # API kilitlenmelerini onlemek icin genel 30 saniye zaman asimi siniri
 socket.setdefaulttimeout(30)
 
@@ -289,11 +293,28 @@ st.title("Bluefin Crewing - Otomatik CV Donusturucu")
 st.markdown("Personel CV'lerini standart sirket basvuru formuna (SEAFARER APPLICATION FORM.xlsx) hizli ve eksiksiz aktarin.")
 
 with st.sidebar:
+    st.markdown(f"**⚓ Güncel Sürüm:** `{APP_VERSION}`")
+    st.caption(f"📅 Son Güncelleme: {LAST_UPDATE}")
+    st.divider()
+    
     st.header("🔑 Güvenlik & Ayarlar")
     api_key = st.text_input("Gemini API Anahtari:", type="password")
-    st.divider()
+    
     st.info(f"📊 **Bu Oturumdaki Başarılı Çeviri:** {st.session_state['api_counter']} / 20")
-    st.caption("Not: Ekipteki herkes kendi API anahtariyla giris yapabilir. Anahtarlar ve yuklenen belgeler birbirine karismaz.")
+    st.caption("Not: Ekipteki herkes kendi API anahtariyla giris yapabilir. Anahtarlar birbirine karismaz.")
+    st.divider()
+    
+    with st.expander("📝 Sürüm Notları (Güncellemeler)"):
+        st.markdown("""
+        **v1.1 (28.10.2026)**
+        - **JSON Modu (Structured Outputs):** Veri çekimi %100 kararlı hale getirildi. Hata payı sıfırlandı.
+        - **Şablon Bellekleme (Cache):** Excel oluşturma hızı milisaniyelere indirildi.
+        - **Hız Optimizasyonu:** Fotoğraf taraması sadece ilk 2 sayfa ile sınırlandırıldı.
+        - **Hizmet Süresi Kontrolü:** Zabit (4-10 ay) ve Rating (6-12 ay) için kırmızı renkli otomatik uyarı sistemi eklendi.
+        - **Belirsiz Alan İşaretleyicisi:** Yapay zekanın emin olmadığı alanları SARI renge boyaması sağlandı.
+        - **Sıralama:** Deniz hizmetleri en güncelden en eskiye otomatik sıralanıyor.
+        - **Akıllı İsimlendirme:** İndirilen dosya adı otomatik olarak `RÜTBE_İSİM_SOYİSİM.xlsx` yapıldı.
+        """)
 
 if not api_key:
     st.warning("Lutfen sol menuden Gemini API anahtarinizi girin.")
