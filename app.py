@@ -11,8 +11,8 @@ from google import genai
 from google.genai import types
 
 # --- SURUM VE GUNCELLEME TAKIBI ---
-APP_VERSION = "v1.1"
-LAST_UPDATE = "28.10.2026 - 11:05"
+APP_VERSION = "v1.3"
+LAST_UPDATE = "28.10.2026 - 11:40"
 
 # API kilitlenmelerini onlemek icin genel 30 saniye zaman asimi siniri
 socket.setdefaulttimeout(30)
@@ -21,6 +21,32 @@ st.set_page_config(
     page_title="Bluefin Crewing - Seafarer CV Converter",
     layout="wide"
 )
+
+# --- SIFRELI GIRIS (LOGIN) EKRANI ---
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+
+if not st.session_state["authenticated"]:
+    # Sayfayi ortalamak icin bosluklar kullaniyoruz
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("🔒 Bluefin Crewing")
+        st.markdown("Sisteme erişmek için lütfen yetki şifrenizi girin.")
+        
+        pwd_input = st.text_input("Sistem Şifresi:", type="password")
+        if st.button("Giriş Yap", type="primary", use_container_width=True):
+            # Secrets icindeki APP_PASSWORD ile karsilastir
+            if pwd_input == st.secrets.get("APP_PASSWORD"):
+                st.session_state["authenticated"] = True
+                st.rerun() # Dogruysa sayfayi yenile ve asil uygulamayi ac
+            else:
+                st.error("Hatalı şifre! Lütfen tekrar deneyin.")
+    # Sifre girilene kadar kodun geri kalanini durdur
+    st.stop()
+
+# ==========================================
+# ASIL UYGULAMA (Sifre dogruysa burasi calisir)
+# ==========================================
 
 # Sayac icin session state baslatma
 if 'api_counter' not in st.session_state:
@@ -147,7 +173,6 @@ def extract_content(file_bytes, file_name):
             except:
                 pass
             
-            # Fotograf aramasini yalnizca ilk 2 sayfa ile sinirla (Hiz optimizasyonu)
             if not photo and i < 2:
                 try:
                     for img_obj in page.images:
@@ -168,7 +193,6 @@ def analyze_cv(api_key, text_content):
     prompt_safe = prompt.encode("ascii", "ignore").decode("ascii")
     
     try:
-        # API'nin yalnizca guvenilir ve %100 uyan JSON formati uretmesini sagla (Temperature: 0)
         response = client.models.generate_content(
             model="gemini-3.8-flash",
             contents=prompt_safe,
@@ -295,25 +319,44 @@ st.markdown("Personel CV'lerini standart sirket basvuru formuna (SEAFARER APPLIC
 with st.sidebar:
     st.markdown(f"**⚓ Güncel Sürüm:** `{APP_VERSION}`")
     st.caption(f"📅 Son Güncelleme: {LAST_UPDATE}")
+    
+    # SIFRELI GIRISTEN CIKIS (LOGOUT) BUTONU
+    if st.button("🚪 Sistemden Çıkış Yap"):
+        st.session_state["authenticated"] = False
+        st.rerun()
+
     st.divider()
     
     st.header("🔑 Güvenlik & Ayarlar")
-    api_key = st.text_input("Gemini API Anahtari:", type="password")
+    
+    saved_key = ""
+    try:
+        if "GEMINI_API_KEY" in st.secrets:
+            saved_key = st.secrets["GEMINI_API_KEY"]
+    except:
+        pass
+
+    api_key = st.text_input("Gemini API Anahtari:", type="password", value=saved_key)
     
     st.info(f"📊 **Bu Oturumdaki Başarılı Çeviri:** {st.session_state['api_counter']} / 20")
-    st.caption("Not: Ekipteki herkes kendi API anahtariyla giris yapabilir. Anahtarlar birbirine karismaz.")
+    st.caption("Not: Kutuya sistemdeki kayitli anahtar otomatik gelir. Kotaniz dolarsa silip baska bir anahtar girebilirsiniz.")
     st.divider()
     
     with st.expander("📝 Sürüm Notları (Güncellemeler)"):
         st.markdown("""
+        **v1.3 (28.10.2026)**
+        - **Güvenli Giriş Sistemi:** Uygulamaya yetkisiz erişimi engellemek için `APP_PASSWORD` ile şifreli giriş ekranı eklendi.
+        
+        **v1.2 (28.10.2026)**
+        - **Otomatik API Anahtarı Kaydı:** API anahtarının gizli kasadan (Secrets) otomatik çekilmesi sağlandı.
+        
         **v1.1 (28.10.2026)**
-        - **JSON Modu (Structured Outputs):** Veri çekimi %100 kararlı hale getirildi. Hata payı sıfırlandı.
-        - **Şablon Bellekleme (Cache):** Excel oluşturma hızı milisaniyelere indirildi.
-        - **Hız Optimizasyonu:** Fotoğraf taraması sadece ilk 2 sayfa ile sınırlandırıldı.
-        - **Hizmet Süresi Kontrolü:** Zabit (4-10 ay) ve Rating (6-12 ay) için kırmızı renkli otomatik uyarı sistemi eklendi.
-        - **Belirsiz Alan İşaretleyicisi:** Yapay zekanın emin olmadığı alanları SARI renge boyaması sağlandı.
+        - **JSON Modu:** Veri çekimi %100 kararlı hale getirildi.
+        - **Şablon Bellekleme:** Excel oluşturma hızı artırıldı.
+        - **Hız Optimizasyonu:** Fotoğraf taraması ilk 2 sayfa ile sınırlandırıldı.
+        - **Hizmet Süresi Kontrolü:** Zabit ve Rating için kırmızı otomatik uyarı.
+        - **Belirsiz Alan:** Emin olunmayan alanlar SARI renkle işaretleniyor.
         - **Sıralama:** Deniz hizmetleri en güncelden en eskiye otomatik sıralanıyor.
-        - **Akıllı İsimlendirme:** İndirilen dosya adı otomatik olarak `RÜTBE_İSİM_SOYİSİM.xlsx` yapıldı.
         """)
 
 if not api_key:
@@ -335,9 +378,7 @@ if uploaded_file is not None:
                 st.session_state['parsed_data'] = parsed_data
                 st.session_state['photo'] = photo
                 
-                # Basarili islem sayacini artir
                 st.session_state['api_counter'] += 1
-                
                 st.success("Çözümleme saniyeler içinde tamamlandı!")
                 
             except Exception as e:
@@ -349,12 +390,10 @@ if uploaded_file is not None:
 
         st.divider()
         
-        # Hizmet Suresi Uyarilari (Kirmizi Banner)
         if d.get('warnings'):
             for warning in d['warnings']:
                 st.error(f"🚨 **DİKKAT (Hizmet Süresi Anormalliği):** {warning}")
                 
-        # Belirsiz Alan Uyarilari (Sari Banner)
         if d.get('uncertain_fields'):
             st.warning(f"⚠️ **GÖZDEN GEÇİRİN:** Yapay Zeka bazı alanları net okuyamadı. Bu alanlar Excel'de SARI ile işaretlendi: {', '.join(d['uncertain_fields'])}")
             
@@ -379,7 +418,6 @@ if uploaded_file is not None:
 
         excel_data = fill_excel_template(d, photo)
         
-        # Dosya adina rutbe ekleme (Klasorleme kolayligi icin)
         safe_rank = str(d.get('rank_applied', 'Bilinmeyen_Rutbe')).replace('/', '_').replace(' ', '_').upper()
         safe_name = str(d.get('name', 'Seafarer')).replace(' ', '_').upper()
         safe_surname = str(d.get('surname', 'CV')).replace(' ', '_').upper()
