@@ -1,6 +1,8 @@
 streamlit
 openpyxl
-Pillow
-pypdf
+pillow
 python-docx
-google-genai
+PyMuPDF
+instructor
+groq
+pydantic
