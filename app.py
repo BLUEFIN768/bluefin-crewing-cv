@@ -96,7 +96,7 @@ def analyze_cv_with_groq(text_content):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"CV METNİ:\n{safe_text}"}
             ],
-            model="llama-3.1-70b-versatile",
+            model="openai/gpt-oss-120b",
             temperature=0.0,
             response_format={"type": "json_object"}
         )
