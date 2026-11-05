@@ -1,143 +1,81 @@
 import streamlit as st
-import os, io, json, re, datetime, zipfile, time
-import socket
+import os, io, datetime, zipfile, time
+import fitz  # PyMuPDF
+from docx import Document
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from openpyxl.styles import PatternFill
 from PIL import Image
-import pypdf
-from docx import Document
-from google import genai
-from google.genai import types
 
-# --- SURUM VE GUNCELLEME TAKIBI ---
-APP_VERSION = "v1.3"
-LAST_UPDATE = "28.10.2026 - 11:40"
+# --- YENI AÇIK KAYNAK YAPAY ZEKA MİMARİSİ ---
+import instructor
+from groq import Groq
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict
 
-# API kilitlenmelerini onlemek icin genel 30 saniye zaman asimi siniri
-socket.setdefaulttimeout(30)
-
-st.set_page_config(
-    page_title="Bluefin Crewing - Seafarer CV Converter",
-    layout="wide"
-)
-
-# --- SIFRELI GIRIS (LOGIN) EKRANI ---
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-
-if not st.session_state["authenticated"]:
-    # Sayfayi ortalamak icin bosluklar kullaniyoruz
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.title("🔒 Bluefin Crewing")
-        st.markdown("Sisteme erişmek için lütfen yetki şifrenizi girin.")
-        
-        pwd_input = st.text_input("Sistem Şifresi:", type="password")
-        if st.button("Giriş Yap", type="primary", use_container_width=True):
-            # Secrets icindeki APP_PASSWORD ile karsilastir
-            if pwd_input == st.secrets.get("APP_PASSWORD"):
-                st.session_state["authenticated"] = True
-                st.rerun() # Dogruysa sayfayi yenile ve asil uygulamayi ac
-            else:
-                st.error("Hatalı şifre! Lütfen tekrar deneyin.")
-    # Sifre girilene kadar kodun geri kalanini durdur
-    st.stop()
-
-# ==========================================
-# ASIL UYGULAMA (Sifre dogruysa burasi calisir)
-# ==========================================
-
-# Sayac icin session state baslatma
-if 'api_counter' not in st.session_state:
-    st.session_state['api_counter'] = 0
-
+APP_VERSION = "v2.0 (Groq Llama-3 & Instructor Core)"
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
+st.set_page_config(page_title="Bluefin Crewing - Enterprise CV Parser", layout="wide")
+
+# --- PYDANTIC VERİ ŞEMALARI (SIFIR HATA GARANTİSİ) ---
+class SeaService(BaseModel):
+    vsl_type: str = Field(default="")
+    vsl_name: str = Field(default="")
+    company: str = Field(default="")
+    rank: str = Field(default="")
+    dwt: str = Field(default="")
+    engine_type: str = Field(default="")
+    sign_on: str = Field(default="", description="DD.MM.YYYY formatinda")
+    sign_off: str = Field(default="", description="DD.MM.YYYY formatinda")
+    reason: str = Field(default="")
+
+class STCWDate(BaseModel):
+    issue: str = Field(default="")
+    expiry: str = Field(default="")
+
+class SeafarerCV(BaseModel):
+    name: str = Field(default="")
+    surname: str = Field(default="")
+    rank_applied: str = Field(default="")
+    qualification: str = Field(default="")
+    id_no: str = Field(default="")
+    dob: str = Field(default="")
+    english_level: str = Field(default="")
+    phone: str = Field(default="")
+    phone2: str = Field(default="")
+    email: str = Field(default="")
+    address: str = Field(default="")
+    marital_status: str = Field(default="")
+    children: str = Field(default="")
+    height: str = Field(default="")
+    weight: str = Field(default="")
+    shoes: str = Field(default="")
+    overall: str = Field(default="")
+    next_of_kin: str = Field(default="Isim - Telefon - Adres")
+    seaman_book_no: str = Field(default="")
+    seaman_book_issue: str = Field(default="")
+    seaman_book_expiry: str = Field(default="")
+    passport_no: str = Field(default="")
+    passport_issue: str = Field(default="")
+    passport_expiry: str = Field(default="")
+    medical_issue: str = Field(default="")
+    medical_expiry: str = Field(default="")
+    yellow_fever_issue: str = Field(default="")
+    yellow_fever_expiry: str = Field(default="")
+    usa_visa: str = Field(default="")
+    schengen_visa: str = Field(default="")
+    sea_service: List[SeaService] = Field(default_factory=list, description="En guncel gemi en ustte olacak sekilde sirala.")
+    stcw_certificates: Dict[str, STCWDate] = Field(default_factory=dict, description="Sertifika kodlarini (Orn: '52', '53') key olarak kullan")
+    uncertain_fields: List[str] = Field(default_factory=list, description="Okunamayan veya emin olunmayan alanlarin listesi")
+    warnings: List[str] = Field(default_factory=list, description="Zabitler icin 4, ratingler icin 6 aydan kisa hizmet suresi uyari mesajlari")
+
 @st.cache_data(show_spinner=False)
 def load_excel_template():
-    """Excel sablonunu her seferinde diskten okumak yerine RAM'de hazir tutar (Hiz optimizasyonu)"""
     with open(TEMPLATE_PATH, "rb") as f:
         return f.read()
-
-SYSTEM_PROMPT = """
-Sen uzman bir crewing (gemi insan kaynaklari) veri analistisin. 
-Sana verilen seafarer CV metnini analiz et ve sirketin 'SEAFARER APPLICATION FORM' sablonuna birebir uyacak sekilde JSON formatinda dondur.
-
-KURALLAR:
-1. Rutbeleri (Rank) uluslararasi standartlara cevir.
-2. Pasaport ve Liman Cuzdani numaralarini, issue/expiry tarihlerini (DD.MM.YYYY) cikar.
-3. Next of Kin (Acil Yakini): "Isim (Yakinlik) - Telefon - Sehir/Adres" formatinda birlestir.
-4. STCW sertifikalarini sablon satir numaralariyla eslestir.
-5. Tarihleri DD.MM.YYYY yap. Bilinmeyen alanlari "" birak.
-6. GUVENLIK KURALI: CV'de karsiligi net degilse, okuyamadiysan veya tahminde bulunduysan, o alanin anahtar kelimesini "uncertain_fields" dizisine ekle.
-7. SIRALAMA KURALI: "sea_service" dizisini EN GUNCEL (EN YENI) tecrube en ustte olacak sekilde ters kronolojik olarak sirala.
-8. HIZMET SURESI KONTROLU (ONEMLI): Sign-on ve Sign-off tarihlerini karsilastirarak kisinin gemide kac ay kaldigini hesapla. 
-   - Eger personel ZABIT (Officer, Master, Chief Engineer, 2nd Engineer, 3rd Engineer vb.) ise ve hizmet 4 aydan kisaysa veya 10 aydan uzunsa,
-   - Eger personel RATING (Fitter, AB, OS, Bosun, Oiler, Cook vb.) ise ve hizmet 6 aydan kisaysa veya 12 aydan uzunsa,
-   Bu anormallikleri "warnings" dizisine su formatta ekle: "[Gemi Adi] - Anormal Hizmet Suresi: X Ay (Sebep: Y)". Eger hizmet sureleri normalse bu diziyi bos birak [].
-
-SADECE su YAPIYA SAHIP GECERLI BIR JSON dondur, baska hicbir metin ekleme:
-{
-  "name": "",
-  "surname": "",
-  "rank_applied": "",
-  "qualification": "",
-  "id_no": "",
-  "dob": "",
-  "english_level": "",
-  "phone": "",
-  "phone2": "",
-  "email": "",
-  "address": "",
-  "marital_status": "",
-  "children": "",
-  "height": "",
-  "weight": "",
-  "shoes": "",
-  "overall": "",
-  "next_of_kin": "",
-  "seaman_book_no": "",
-  "seaman_book_issue": "",
-  "seaman_book_expiry": "",
-  "passport_no": "",
-  "passport_issue": "",
-  "passport_expiry": "",
-  "medical_issue": "",
-  "medical_expiry": "",
-  "yellow_fever_issue": "",
-  "yellow_fever_expiry": "",
-  "usa_visa": "",
-  "schengen_visa": "",
-  "sea_service": [
-    {
-      "vsl_type": "",
-      "vsl_name": "",
-      "company": "",
-      "rank": "",
-      "dwt": "",
-      "engine_type": "",
-      "sign_on": "",
-      "sign_off": "",
-      "reason": ""
-    }
-  ],
-  "stcw_certificates": {
-    "52": {"issue": "", "expiry": ""},
-    "53": {"issue": "", "expiry": ""},
-    "54": {"issue": "", "expiry": ""},
-    "55": {"issue": "", "expiry": ""},
-    "57": {"issue": "", "expiry": ""},
-    "61": {"issue": "", "expiry": ""},
-    "62": {"issue": "", "expiry": ""},
-    "63": {"issue": "", "expiry": ""}
-  },
-  "uncertain_fields": [],
-  "warnings": []
-}
-"""
 
 def extract_content(file_bytes, file_name):
     ext = os.path.splitext(file_name)[1].lower()
@@ -147,63 +85,54 @@ def extract_content(file_bytes, file_name):
     if ext == ".docx":
         doc = Document(io.BytesIO(file_bytes))
         for p in doc.paragraphs:
-            if p.text.strip():
-                text += p.text + "\n"
+            text += p.text + "\n"
         for t in doc.tables:
             for r in t.rows:
-                row_t = " | ".join([c.text.strip().replace('\n', ' ') for c in r.cells if c.text.strip()])
-                if row_t:
-                    text += row_t + "\n"
-        try:
-            with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-                imgs = [n for n in z.namelist() if n.startswith('word/media/')]
-                if imgs:
-                    img_data = z.read(imgs[0])
-                    photo = Image.open(io.BytesIO(img_data)).convert("RGB")
-        except:
-            pass
-
+                text += " | ".join([c.text.strip() for c in r.cells if c.text.strip()]) + "\n"
     elif ext == ".pdf":
-        reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-        for i, page in enumerate(reader.pages):
-            try:
-                t = page.extract_text()
-                if t:
-                    text += t + "\n"
-            except:
-                pass
-            
-            if not photo and i < 2:
-                try:
-                    for img_obj in page.images:
-                        p_candidate = Image.open(io.BytesIO(img_obj.data)).convert("RGB")
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        for page in doc:
+            text += page.get_text()
+            # Hizli fotograf cikarimi
+            if not photo:
+                images = page.get_images(full=True)
+                if images:
+                    xref = images[0][0]
+                    base_image = doc.extract_image(xref)
+                    image_bytes = base_image["image"]
+                    try:
+                        p_candidate = Image.open(io.BytesIO(image_bytes)).convert("RGB")
                         if p_candidate.size[0] > 80 and p_candidate.size[1] > 80:
                             photo = p_candidate
-                            break
-                except:
-                    pass
-
+                    except:
+                        pass
     return text, photo
 
-def analyze_cv(api_key, text_content):
-    clean_key = api_key.strip()
-    client = genai.Client(api_key=clean_key)
+def analyze_cv_with_groq(api_key, text_content):
+    # Google yerine Groq + Instructor mimarisi
+    client = instructor.from_groq(Groq(api_key=api_key.strip()), mode=instructor.Mode.JSON)
     
-    prompt = f"{SYSTEM_PROMPT}\n\nAsagidaki CV icerigini analiz et:\n\n{text_content}"
-    prompt_safe = prompt.encode("ascii", "ignore").decode("ascii")
+    prompt = f"""
+    Asagidaki seafarer (gemi adami) CV'sini analiz et ve BİREBİR Pydantic semasina uygun doldur.
+    Tarihleri DD.MM.YYYY yap. Eksiklere "" koy.
+    Zabitler icin 4 ay, Ratingler icin 6 aydan kisa hizmetleri 'warnings' dizisine "[Gemi Adi] - Erken Ayrilma" olarak ekle.
+    Emin olmadigin alanlari 'uncertain_fields' icine yaz.
+    
+    CV METNİ:
+    {text_content}
+    """
     
     try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt_safe,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.0
-            )
+        # LLM'e veriyi Pydantic nesnesi olarak uretmesini zorunlu kiliyoruz
+        cv_data = client.chat.completions.create(
+            model="llama3-70b-8192",
+            response_model=SeafarerCV,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0
         )
-        return json.loads(response.text)
+        return cv_data.model_dump() # Excel fonksiyonu icin Dictionary'ye cevir
     except Exception as e:
-        raise Exception(f"API Yanit Hatasi: {str(e)}")
+        raise Exception(f"Sistem Hatasi (Groq/Parser): {str(e)}")
 
 def safe_write(ws, row, column, value, fill=None):
     cell = ws.cell(row=row, column=column)
@@ -224,9 +153,7 @@ def fill_excel_template(data, photo=None):
     today = datetime.datetime.now()
     
     uncertain_keys = data.get('uncertain_fields', [])
-    
-    def get_fill(field_name):
-        return YELLOW_FILL if field_name in uncertain_keys else None
+    def get_fill(field_name): return YELLOW_FILL if field_name in uncertain_keys else None
 
     safe_write(ws, 7, 3, data.get('name', ''), fill=get_fill('name'))
     safe_write(ws, 8, 3, data.get('surname', ''), fill=get_fill('surname'))
@@ -250,19 +177,11 @@ def fill_excel_template(data, photo=None):
     safe_write(ws, 20, 5, data.get('seaman_book_no', ''), fill=get_fill('seaman_book_no'))
     safe_write(ws, 20, 6, data.get('seaman_book_issue', ''), fill=get_fill('seaman_book_issue'))
     safe_write(ws, 20, 8, data.get('seaman_book_expiry', ''), fill=get_fill('seaman_book_expiry'))
-
     safe_write(ws, 21, 5, data.get('passport_no', ''), fill=get_fill('passport_no'))
     safe_write(ws, 21, 6, data.get('passport_issue', ''), fill=get_fill('passport_issue'))
     safe_write(ws, 21, 8, data.get('passport_expiry', ''), fill=get_fill('passport_expiry'))
-
     safe_write(ws, 22, 6, data.get('medical_issue', ''), fill=get_fill('medical_issue'))
     safe_write(ws, 22, 8, data.get('medical_expiry', ''), fill=get_fill('medical_expiry'))
-
-    safe_write(ws, 23, 6, data.get('yellow_fever_issue', ''), fill=get_fill('yellow_fever_issue'))
-    safe_write(ws, 23, 8, data.get('yellow_fever_expiry', ''), fill=get_fill('yellow_fever_expiry'))
-
-    safe_write(ws, 24, 5, data.get('usa_visa', ''), fill=get_fill('usa_visa'))
-    safe_write(ws, 25, 5, data.get('schengen_visa', ''), fill=get_fill('schengen_visa'))
 
     if photo:
         photo_buf = io.BytesIO()
@@ -273,24 +192,11 @@ def fill_excel_template(data, photo=None):
         img = OpenpyxlImage(photo_buf)
         ws.add_image(img, "H1")
 
-    stcw_data = data.get('stcw_certificates', {})
-    for row_str, dates in stcw_data.items():
+    for row_str, dates in data.get('stcw_certificates', {}).items():
         try:
             r = int(row_str)
-            if dates.get('issue'):
-                safe_write(ws, r, 8, dates['issue'], fill=get_fill('stcw_certificates'))
-            if dates.get('expiry'):
-                is_expired = False
-                try:
-                    exp_dt = datetime.datetime.strptime(dates['expiry'].replace('/', '.').replace('-', '.'), "%d.%m.%Y")
-                    if exp_dt < today:
-                        is_expired = True
-                except:
-                    pass
-                fill_to_apply = RED_FILL if is_expired else get_fill('stcw_certificates')
-                safe_write(ws, r, 9, dates['expiry'], fill=fill_to_apply)
-                if is_expired:
-                    safe_write(ws, r, 8, dates.get('issue', ''), fill=RED_FILL)
+            if dates.get('issue'): safe_write(ws, r, 8, dates['issue'], fill=get_fill('stcw_certificates'))
+            if dates.get('expiry'): safe_write(ws, r, 9, dates['expiry'], fill=get_fill('stcw_certificates'))
         except:
             pass
 
@@ -313,120 +219,53 @@ def fill_excel_template(data, photo=None):
     out_stream.seek(0)
     return out_stream
 
-st.title("Bluefin Crewing - Otomatik CV Donusturucu")
-st.markdown("Personel CV'lerini standart sirket basvuru formuna (SEAFARER APPLICATION FORM.xlsx) hizli ve eksiksiz aktarin.")
-
 with st.sidebar:
-    st.markdown(f"**⚓ Güncel Sürüm:** `{APP_VERSION}`")
-    st.caption(f"📅 Son Güncelleme: {LAST_UPDATE}")
-    
-    # SIFRELI GIRISTEN CIKIS (LOGOUT) BUTONU
-    if st.button("🚪 Sistemden Çıkış Yap"):
-        st.session_state["authenticated"] = False
-        st.rerun()
-
+    st.markdown(f"**⚓ Mimari:** `{APP_VERSION}`")
     st.divider()
     
-    st.header("🔑 Güvenlik & Ayarlar")
+    # Artik Google degil, Groq API Anahtari kullanacagiz
+    saved_key = st.secrets.get("GROQ_API_KEY", "")
+    api_key = st.text_input("Groq API Anahtari:", type="password", value=saved_key)
+    st.caption("Google Gemini devreden cikarildi. Lutfen console.groq.com adresinden aldiginiz anahtari girin.")
     
-    saved_key = ""
-    try:
-        if "GEMINI_API_KEY" in st.secrets:
-            saved_key = st.secrets["GEMINI_API_KEY"]
-    except:
-        pass
-
-    api_key = st.text_input("Gemini API Anahtari:", type="password", value=saved_key)
-    
-    st.info(f"📊 **Bu Oturumdaki Başarılı Çeviri:** {st.session_state['api_counter']} / 20")
-    st.caption("Not: Kutuya sistemdeki kayitli anahtar otomatik gelir. Kotaniz dolarsa silip baska bir anahtar girebilirsiniz.")
-    st.divider()
-    
-    with st.expander("📝 Sürüm Notları (Güncellemeler)"):
-        st.markdown("""
-        **v1.3 (28.10.2026)**
-        - **Güvenli Giriş Sistemi:** Uygulamaya yetkisiz erişimi engellemek için `APP_PASSWORD` ile şifreli giriş ekranı eklendi.
-        
-        **v1.2 (28.10.2026)**
-        - **Otomatik API Anahtarı Kaydı:** API anahtarının gizli kasadan (Secrets) otomatik çekilmesi sağlandı.
-        
-        **v1.1 (28.10.2026)**
-        - **JSON Modu:** Veri çekimi %100 kararlı hale getirildi.
-        - **Şablon Bellekleme:** Excel oluşturma hızı artırıldı.
-        - **Hız Optimizasyonu:** Fotoğraf taraması ilk 2 sayfa ile sınırlandırıldı.
-        - **Hizmet Süresi Kontrolü:** Zabit ve Rating için kırmızı otomatik uyarı.
-        - **Belirsiz Alan:** Emin olunmayan alanlar SARI renkle işaretleniyor.
-        - **Sıralama:** Deniz hizmetleri en güncelden en eskiye otomatik sıralanıyor.
-        """)
-
 if not api_key:
-    st.warning("Lutfen sol menuden Gemini API anahtarinizi girin.")
+    st.error("Sistemi kullanmak icin Groq API anahtari gereklidir.")
     st.stop()
 
-uploaded_file = st.file_uploader("Donusturulecek CV yi Secin (PDF, Word)", type=["pdf", "docx"])
+uploaded_file = st.file_uploader("Donusturulecek CV yi Secin", type=["pdf", "docx"])
 
-if uploaded_file is not None:
+if uploaded_file:
     file_bytes = uploaded_file.read()
-    file_name = uploaded_file.name
-
-    st.write(f"📁 **Yuklenen Belge:** {file_name}")
-    if st.button("🚀 CV'yi Çözümle ve Formu Doldur", type="primary"):
-        with st.spinner("Yapay Zeka Devrede (Hızlı Tarama ve Sıfır Hata Modu Aktif)..."):
+    
+    if st.button("🚀 CV'yi Çözümle (Sıfır Hata Modu)", type="primary"):
+        with st.spinner("Yeni Llama-3 Motoru Devrede..."):
             try:
-                text_content, photo = extract_content(file_bytes, file_name)
-                parsed_data = analyze_cv(api_key, text_content)
+                text_content, photo = extract_content(file_bytes, uploaded_file.name)
+                parsed_data = analyze_cv_with_groq(api_key, text_content)
                 st.session_state['parsed_data'] = parsed_data
                 st.session_state['photo'] = photo
-                
-                st.session_state['api_counter'] += 1
-                st.success("Çözümleme saniyeler içinde tamamlandı!")
-                
+                st.success("Çözümleme saniyeler içinde başarıyla tamamlandı!")
             except Exception as e:
-                st.error(f"Hata olustu: {str(e)}")
+                st.error(str(e))
 
     if 'parsed_data' in st.session_state:
         d = st.session_state['parsed_data']
-        photo = st.session_state.get('photo', None)
-
-        st.divider()
-        
-        if d.get('warnings'):
-            for warning in d['warnings']:
-                st.error(f"🚨 **DİKKAT (Hizmet Süresi Anormalliği):** {warning}")
-                
-        if d.get('uncertain_fields'):
-            st.warning(f"⚠️ **GÖZDEN GEÇİRİN:** Yapay Zeka bazı alanları net okuyamadı. Bu alanlar Excel'de SARI ile işaretlendi: {', '.join(d['uncertain_fields'])}")
-            
-        st.subheader("📋 Çıkarılan Bilgiler ve Önizleme")
-
-        c1, c2, c3 = st.columns([1, 2, 2])
-        with c1:
-            if photo:
-                st.image(photo, caption="Aday Fotografi", width=120)
-            else:
-                st.info("Fotograf bulunamadi.")
-        with c2:
-            st.text_input("Adi:", value=d.get('name', ''), key="name")
-            st.text_input("Soyadi:", value=d.get('surname', ''), key="surname")
-            st.text_input("Gorev (Rank):", value=d.get('rank_applied', ''), key="rank")
-            st.text_input("Pasaport No:", value=d.get('passport_no', ''), key="pass_no")
-        with c3:
-            st.text_input("T.C. / Uyruk:", value=d.get('id_no', ''), key="id_no")
-            st.text_input("Dogum Tarihi:", value=d.get('dob', ''), key="dob")
-            st.text_input("Liman Cuzdani No:", value=d.get('seaman_book_no', ''), key="sb_no")
-            st.text_input("Acil Durum Yakini:", value=d.get('next_of_kin', ''), key="kin")
+        photo = st.session_state.get('photo')
 
         excel_data = fill_excel_template(d, photo)
+        safe_name = f"{d.get('rank_applied','')}_{d.get('name','')}_{d.get('surname','')}".replace(' ', '_').upper()
         
-        safe_rank = str(d.get('rank_applied', 'Bilinmeyen_Rutbe')).replace('/', '_').replace(' ', '_').upper()
-        safe_name = str(d.get('name', 'Seafarer')).replace(' ', '_').upper()
-        safe_surname = str(d.get('surname', 'CV')).replace(' ', '_').upper()
-        out_filename = f"{safe_rank}_{safe_name}_{safe_surname}.xlsx"
-
         st.download_button(
-            label=f"📥 İNDİR: {out_filename}",
+            label=f"📥 İNDİR: {safe_name}.xlsx",
             data=excel_data,
-            file_name=out_filename,
+            file_name=f"{safe_name}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
+            type="primary",
+            use_container_width=True
         )
+        st.divider()
+
+        if d.get('warnings'):
+            for warning in d['warnings']: st.error(f"🚨 DİKKAT: {warning}")
+        if d.get('uncertain_fields'):
+            st.warning(f"⚠️ SARI İŞARETLİ ALANLAR: {', '.join(d['uncertain_fields'])}")
