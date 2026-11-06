@@ -8,7 +8,7 @@ from openpyxl.styles import PatternFill
 from PIL import Image
 from groq import Groq
 
-APP_VERSION = "v2.4 (Groq Final Core & UTF-8 Safe)"
+APP_VERSION = "v2.5 (Groq Auto-Model & Regex Parser)"
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -56,6 +56,30 @@ def extract_content(file_bytes, file_name):
 def analyze_cv_with_groq(text_content):
     client = Groq(api_key=GROQ_API_KEY)
     
+    # --- YENİ: OTOMATİK MODEL DEDEKTÖRÜ ---
+    # Groq'un isim degistirme/silme krizlerine karsi API'ye o an hangi modellerin acik oldugu sorulur.
+    try:
+        available_models = client.models.list().data
+        model_ids = [m.id for m in available_models]
+        
+        active_model = None
+        # 1. Oncelik: En zeki Llama (70B)
+        for m in model_ids:
+            if "llama" in m.lower() and "70b" in m.lower():
+                active_model = m
+                break
+        # 2. Oncelik: Herhangi bir Llama
+        if not active_model:
+            for m in model_ids:
+                if "llama" in m.lower():
+                    active_model = m
+                    break
+        # 3. Oncelik: Hesaba tanimli rastgele ilk calisan model
+        if not active_model and model_ids:
+            active_model = model_ids[0]
+    except Exception:
+        active_model = "llama-3.1-8b-instant" # Son care guvenli liman
+        
     system_prompt = """
     Sen uzman bir gemi insan kaynaklari (crewing) analistisin. 
     Sana verilen CV'yi analiz et ve SADECE asagidaki JSON formatinda cikti ver. Baska hicbir aciklama veya metin yazma.
@@ -87,7 +111,6 @@ def analyze_cv_with_groq(text_content):
     }
     """
     
-    # Turkce karakter cokmelerini engellemek icin metni UTF-8'e zorluyoruz
     safe_text = str(text_content).encode('utf-8', 'ignore').decode('utf-8')
     
     try:
@@ -96,23 +119,21 @@ def analyze_cv_with_groq(text_content):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"CV METNİ:\n{safe_text}"}
             ],
-            # Sifir hata: Groq'un kesinlikle acik olan resmi modeline sabitlendi
-            model="llama-3.1-8b-instant",
+            model=active_model,
             temperature=0.0
         )
         
         raw_text = response.choices[0].message.content
         
-        # Yapay zeka fazladan metin uretse bile icindeki JSON blogunu (veriyi) zorla söküp aliyoruz
         match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if match:
             json_str = match.group(0)
-            return json.loads(json_str)
+            return json.loads(json_str), active_model
         else:
             raise Exception("Yapay zeka geçerli bir format üretmedi.")
             
     except Exception as e:
-        raise Exception(f"Yapay Zeka Okuma Hatasi: {str(e)}")
+        raise Exception(f"Okuma Hatasi (Kullanılan Model: {active_model}): {str(e)}")
 
 def safe_write(ws, row, column, value, fill=None):
     cell = ws.cell(row=row, column=column)
@@ -206,7 +227,7 @@ with st.sidebar:
     st.markdown(f"**⚓ Mimari:** `{APP_VERSION}`")
     st.divider()
     st.success("✅ **Sistem Durumu:** Çevrimiçi")
-    st.caption("JSON doğrulama hataları ve Türkçe karakter krizleri aşılmış, sistem stabil Llama 3.1 motoru ile güvenceye alınmıştır.")
+    st.caption("Otomatik Model Bulucu aktif: Sistem artık Groq'taki çalışan modelleri kendi tarar ve 404 hatalarını engeller.")
 
 uploaded_file = st.file_uploader("Donusturulecek CV yi Secin", type=["pdf", "docx"])
 
@@ -214,13 +235,14 @@ if uploaded_file:
     file_bytes = uploaded_file.read()
     
     if st.button("🚀 CV'yi Çözümle (Sıfır Hata Modu)", type="primary"):
-        with st.spinner("Motor Devrede (CV Okunuyor)..."):
+        with st.spinner("Motor Devrede (Otomatik Model Seçiliyor ve CV Okunuyor)..."):
             try:
                 text_content, photo = extract_content(file_bytes, uploaded_file.name)
-                parsed_data = analyze_cv_with_groq(text_content)
+                parsed_data, used_model = analyze_cv_with_groq(text_content)
                 st.session_state['parsed_data'] = parsed_data
                 st.session_state['photo'] = photo
-                st.success("Çözümleme saniyeler içinde başarıyla tamamlandı!")
+                st.session_state['used_model'] = used_model
+                st.success(f"Çözümleme {used_model} motoruyla başarıyla tamamlandı!")
             except Exception as e:
                 st.error(str(e))
 
