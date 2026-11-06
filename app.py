@@ -8,12 +8,11 @@ from openpyxl.styles import PatternFill
 from PIL import Image
 from groq import Groq
 
-APP_VERSION = "v2.9 (Groq Strict Text Model Filter)"
+APP_VERSION = "v3.0 (Strict JSON Mode & Auto-Model)"
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
-# Eger sistem hala model bulamazsa, lutfen Groq'tan YENI BIR API KEY alip buraya yapistirin:
 GROQ_API_KEY = "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"
 
 st.set_page_config(page_title="Bluefin Crewing - Enterprise CV Parser", layout="wide")
@@ -60,9 +59,8 @@ def analyze_cv_with_groq(text_content):
         available_models = client.models.list().data
         model_ids = [m.id for m in available_models]
         
-        # SADECE bu metin modellerine izin ver:
-        valid_keywords = ["llama", "gemma", "mixtral", "qwen"]
-        # ASLA bu modelleri secme (arapca, ses, guvenlik, resim):
+        # Qwen cikarildi, sadece Llama, Mixtral ve Gemma kaldi
+        valid_keywords = ["llama", "gemma", "mixtral"]
         banned_keywords = ["guard", "whisper", "vision", "llava", "canopylabs", "orpheus"]
         
         valid_models = [
@@ -72,9 +70,8 @@ def analyze_cv_with_groq(text_content):
         ]
         
         if not valid_models:
-            raise Exception("HATA: Bu API anahtarında kullanılabilecek hiçbir standart metin okuma modeli (Llama vb.) bulunamadı. Lütfen console.groq.com adresinden YENİ BİR API KEY oluşturup koda yapıştırın.")
+            raise Exception("HATA: Bu API anahtarında kullanılabilecek hiçbir standart metin okuma modeli (Llama vb.) bulunamadı. Lütfen YENİ BİR API KEY oluşturun.")
             
-        # Önceliği büyük modellere ver
         valid_models.sort(key=lambda x: "70b" in x.lower() or "8x7b" in x.lower(), reverse=True)
         active_model = valid_models[0]
         
@@ -121,7 +118,8 @@ def analyze_cv_with_groq(text_content):
                 {"role": "user", "content": f"CV METNİ:\n{safe_text}"}
             ],
             model=active_model,
-            temperature=0.0
+            temperature=0.0,
+            response_format={"type": "json_object"} # YAPAY ZEKANIN VIRGUL UNUTMASINI KESIN OLARAK ENGELLER
         )
         
         raw_text = response.choices[0].message.content
@@ -226,7 +224,7 @@ with st.sidebar:
     st.markdown(f"**⚓ Mimari:** `{APP_VERSION}`")
     st.divider()
     st.success("✅ **Sistem Durumu:** Çevrimiçi")
-    st.caption("Kesin Filtre Devrede: Sadece gerçek metin modelleri kabul edilir. Hata devam ederse YENİ API KEY alınmalıdır.")
+    st.caption("JSON Format Zorlayıcı aktif: Yapay zekanın virgül veya parantez unutma ihtimali ortadan kaldırıldı.")
 
 uploaded_file = st.file_uploader("Donusturulecek CV yi Secin", type=["pdf", "docx"])
 
@@ -234,7 +232,7 @@ if uploaded_file:
     file_bytes = uploaded_file.read()
     
     if st.button("🚀 CV'yi Çözümle (Sıfır Hata Modu)", type="primary"):
-        with st.spinner("Motor Devrede (Gerçek Metin Modeli Aranıyor)..."):
+        with st.spinner("Motor Devrede (Akıllı Model Seçiliyor ve CV Okunuyor)..."):
             try:
                 text_content, photo = extract_content(file_bytes, uploaded_file.name)
                 parsed_data, used_model = analyze_cv_with_groq(text_content)
