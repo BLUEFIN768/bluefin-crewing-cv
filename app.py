@@ -82,4 +82,26 @@ def analyze_cv_with_groq(text_content):
       "stcw_certificates": {
         "52": {"issue": "", "expiry": ""}
       },
-      "uncertain_
+      "uncertain_fields": [],
+      "warnings": []
+    }
+    """
+    
+    # Turkce karakter cokmelerini engellemek icin metni UTF-8'e zorluyoruz
+    safe_text = str(text_content).encode('utf-8', 'ignore').decode('utf-8')
+    
+    try:
+        response = client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"CV METNİ:\n{safe_text}"}
+            ],
+            model="llama-3.3-70b-versatile",
+            temperature=0.0
+            # 400 hatasini engellemek icin strict JSON format zorlamasini kaldirdik
+        )
+        
+        raw_text = response.choices[0].message.content
+        
+        # Yapay zeka fazladan metin uretse bile icindeki JSON blogunu (veriyi) zorla söküp aliyoruz
+        match = re
