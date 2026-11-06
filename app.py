@@ -8,7 +8,7 @@ from openpyxl.styles import PatternFill
 from PIL import Image
 from groq import Groq
 
-APP_VERSION = "v2.3 (Groq Mixtral Regex Parser & UTF-8 Safe)"
+APP_VERSION = "v2.4 (Groq Final Core & UTF-8 Safe)"
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -96,8 +96,8 @@ def analyze_cv_with_groq(text_content):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"CV METNİ:\n{safe_text}"}
             ],
-            # Motor en istikrarli Mixtral modeline sabitlendi
-              model="llama3-8b-8192",
+            # Sifir hata: Groq'un kesinlikle acik olan resmi modeline sabitlendi
+            model="llama-3.1-8b-instant",
             temperature=0.0
         )
         
@@ -206,7 +206,7 @@ with st.sidebar:
     st.markdown(f"**⚓ Mimari:** `{APP_VERSION}`")
     st.divider()
     st.success("✅ **Sistem Durumu:** Çevrimiçi")
-    st.caption("JSON doğrulama hataları ve Türkçe karakter krizleri aşılmış, sistem stabil Mixtral motoru ile güvenceye alınmıştır.")
+    st.caption("JSON doğrulama hataları ve Türkçe karakter krizleri aşılmış, sistem stabil Llama 3.1 motoru ile güvenceye alınmıştır.")
 
 uploaded_file = st.file_uploader("Donusturulecek CV yi Secin", type=["pdf", "docx"])
 
