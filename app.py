@@ -1,6 +1,6 @@
 import streamlit as st
 import os, io, datetime, json, re
-import fitz  # PyMuPDF
+import pymupdf  # PDF okuyucu guncel API'ye (uyarisiz surum) gecirildi
 from docx import Document
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
@@ -8,7 +8,7 @@ from openpyxl.styles import PatternFill
 from PIL import Image
 from groq import Groq
 
-APP_VERSION = "v2.7 (Groq Smart Model & Foolproof Syntax)"
+APP_VERSION = "v2.8 (Groq Smart Model & 100% Clean Log)"
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -36,7 +36,7 @@ def extract_content(file_bytes, file_name):
             for r in t.rows:
                 text += " | ".join([c.text.strip() for c in r.cells if c.text.strip()]) + "\n"
     elif ext == ".pdf":
-        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        doc = pymupdf.open(stream=file_bytes, filetype="pdf")
         for page in doc:
             text += page.get_text()
             if not photo:
@@ -85,7 +85,6 @@ def analyze_cv_with_groq(text_content):
     except Exception:
         active_model = "llama-3.1-8b-instant" 
         
-    # --- YENI: KOPYALAMA HATASI VERMEYEN PROMPT YAPISI ---
     system_prompt = (
         "Sen uzman bir gemi insan kaynaklari (crewing) analistisin. "
         "Sana verilen CV'yi analiz et ve SADECE asagidaki JSON formatinda cikti ver. Baska hicbir aciklama veya metin yazma. "
@@ -186,3 +185,107 @@ def fill_excel_template(data, photo=None):
     safe_write(ws, 21, 8, data.get('passport_expiry', ''), fill=get_fill('passport_expiry'))
     safe_write(ws, 22, 6, data.get('medical_issue', ''), fill=get_fill('medical_issue'))
     safe_write(ws, 22, 8, data.get('medical_expiry', ''), fill=get_fill('medical_expiry'))
+    safe_write(ws, 23, 6, data.get('yellow_fever_issue', ''), fill=get_fill('yellow_fever_issue'))
+    safe_write(ws, 23, 8, data.get('yellow_fever_expiry', ''), fill=get_fill('yellow_fever_expiry'))
+    safe_write(ws, 24, 5, data.get('usa_visa', ''), fill=get_fill('usa_visa'))
+    safe_write(ws, 25, 5, data.get('schengen_visa', ''), fill=get_fill('schengen_visa'))
+
+    if photo:
+        photo_buf = io.BytesIO()
+        photo_resized = photo.copy()
+        photo_resized.thumbnail((115, 140))
+        photo_resized.save(photo_buf, format="PNG")
+        photo_buf.seek(0)
+        img = OpenpyxlImage(photo_buf)
+        ws.add_image(img, "H1")
+
+    for row_str, dates in data.get('stcw_certificates', {}).items():
+        try:
+            r = int(row_str)
+            if dates.get('issue'): safe_write(ws, r, 8, dates['issue'], fill=get_fill('stcw_certificates'))
+            if dates.get('expiry'): safe_write(ws, r, 9, dates['expiry'], fill=get_fill('stcw_certificates'))
+        except:
+            pass
+
+    r_idx = 30
+    for exp in data.get('sea_service', []):
+        row_fill = get_fill('sea_service')
+        safe_write(ws, r_idx, 1, exp.get('vsl_type', ''), fill=row_fill)
+        safe_write(ws, r_idx, 2, exp.get('vsl_name', ''), fill=row_fill)
+        safe_write(ws, r_idx, 3, exp.get('company', ''), fill=row_fill)
+        safe_write(ws, r_idx, 4, exp.get('rank', ''), fill=row_fill)
+        safe_write(ws, r_idx, 5, exp.get('dwt', ''), fill=row_fill)
+        safe_write(ws, r_idx, 6, exp.get('engine_type', ''), fill=row_fill)
+        safe_write(ws, r_idx, 7, exp.get('sign_on', ''), fill=row_fill)
+        safe_write(ws, r_idx, 8, exp.get('sign_off', ''), fill=row_fill)
+        safe_write(ws, r_idx, 9, exp.get('reason', ''), fill=row_fill)
+        r_idx += 1
+
+    out_stream = io.BytesIO()
+    wb.save(out_stream)
+    out_stream.seek(0)
+    return out_stream
+
+with st.sidebar:
+    st.markdown(f"**⚓ Mimari:** `{APP_VERSION}`")
+    st.divider()
+    st.success("✅ **Sistem Durumu:** Çevrimiçi")
+    st.caption("Terminal uyarıları giderildi, kopya hataları engellendi ve Akıllı Model Seçici devrede.")
+
+uploaded_file = st.file_uploader("Donusturulecek CV yi Secin", type=["pdf", "docx"])
+
+if uploaded_file:
+    file_bytes = uploaded_file.read()
+    
+    if st.button("🚀 CV'yi Çözümle (Sıfır Hata Modu)", type="primary"):
+        with st.spinner("Motor Devrede (Akıllı Model Seçiliyor ve CV Okunuyor)..."):
+            try:
+                text_content, photo = extract_content(file_bytes, uploaded_file.name)
+                parsed_data, used_model = analyze_cv_with_groq(text_content)
+                st.session_state['parsed_data'] = parsed_data
+                st.session_state['photo'] = photo
+                st.session_state['used_model'] = used_model
+                st.success(f"Çözümleme {used_model} motoruyla başarıyla tamamlandı!")
+            except Exception as e:
+                st.error(str(e))
+
+    if 'parsed_data' in st.session_state:
+        d = st.session_state['parsed_data']
+        photo = st.session_state.get('photo')
+
+        excel_data = fill_excel_template(d, photo)
+        safe_name = f"{d.get('rank_applied','')}_{d.get('name','')}_{d.get('surname','')}".replace(' ', '_').upper()
+        
+        st.download_button(
+            label=f"📥 İNDİR: {safe_name}.xlsx",
+            data=excel_data,
+            file_name=f"{safe_name}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+            use_container_width=True
+        )
+        st.divider()
+
+        if d.get('warnings'):
+            for warning in d['warnings']: st.error(f"🚨 DİKKAT (Hizmet Süresi): {warning}")
+        if d.get('uncertain_fields'):
+            st.warning(f"⚠️ DİKKAT: Yapay Zeka bazı alanları net okuyamadı. Bu alanlar Excel'de SARI ile işaretlendi.")
+            
+        st.subheader("📋 Çıkarılan Bilgiler ve Önizleme")
+
+        c1, c2, c3 = st.columns([1, 2, 2])
+        with c1:
+            if photo:
+                st.image(photo, caption="Aday Fotografi", width=120)
+            else:
+                st.info("Fotograf bulunamadi.")
+        with c2:
+            st.text_input("Adi:", value=d.get('name', ''), key="name")
+            st.text_input("Soyadi:", value=d.get('surname', ''), key="surname")
+            st.text_input("Gorev (Rank):", value=d.get('rank_applied', ''), key="rank")
+            st.text_input("Pasaport No:", value=d.get('passport_no', ''), key="pass_no")
+        with c3:
+            st.text_input("T.C. / Uyruk:", value=d.get('id_no', ''), key="id_no")
+            st.text_input("Dogum Tarihi:", value=d.get('dob', ''), key="dob")
+            st.text_input("Liman Cuzdani No:", value=d.get('seaman_book_no', ''), key="sb_no")
+            st.text_input("Acil Durum Yakini:", value=d.get('next_of_kin', ''), key="kin")
