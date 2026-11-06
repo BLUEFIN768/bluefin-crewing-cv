@@ -97,7 +97,7 @@ def analyze_cv_with_groq(text_content):
                 {"role": "user", "content": f"CV METNİ:\n{safe_text}"}
             ],
             # Motor en istikrarli Mixtral modeline sabitlendi
-            model="mixtral-8x7b-32768",
+              model="llama3-8b-8192",
             temperature=0.0
         )
         
