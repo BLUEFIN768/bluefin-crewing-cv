@@ -8,7 +8,7 @@ from openpyxl.styles import PatternFill
 from PIL import Image
 from groq import Groq
 
-APP_VERSION = "v2.2 (Groq Regex Parser & UTF-8 Safe)"
+APP_VERSION = "v2.3 (Groq Mixtral Regex Parser & UTF-8 Safe)"
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
@@ -96,9 +96,9 @@ def analyze_cv_with_groq(text_content):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"CV METNİ:\n{safe_text}"}
             ],
-            model="llama-3.3-70b-versatile",
+            # Motor en istikrarli Mixtral modeline sabitlendi
+            model="mixtral-8x7b-32768",
             temperature=0.0
-            # 400 hatasini engellemek icin strict JSON format zorlamasini kaldirdik
         )
         
         raw_text = response.choices[0].message.content
@@ -112,9 +112,6 @@ def analyze_cv_with_groq(text_content):
             raise Exception("Yapay zeka geçerli bir format üretmedi.")
             
     except Exception as e:
-        # Eger Llama 3.3 de ileride kapanirsa sisteme acil mudahale icin yedek model gecisi
-        if "does not exist" in str(e) or "decommissioned" in str(e):
-             raise Exception("Groq model adi gecersiz. Lutfen koddaki model='llama-3.3-70b-versatile' kismini model='mixtral-8x7b-32768' olarak degistirin.")
         raise Exception(f"Yapay Zeka Okuma Hatasi: {str(e)}")
 
 def safe_write(ws, row, column, value, fill=None):
@@ -209,7 +206,7 @@ with st.sidebar:
     st.markdown(f"**⚓ Mimari:** `{APP_VERSION}`")
     st.divider()
     st.success("✅ **Sistem Durumu:** Çevrimiçi")
-    st.caption("JSON doğrulama hataları ve Türkçe karakter krizleri aşılmış, sistem stabil hale getirilmiştir.")
+    st.caption("JSON doğrulama hataları ve Türkçe karakter krizleri aşılmış, sistem stabil Mixtral motoru ile güvenceye alınmıştır.")
 
 uploaded_file = st.file_uploader("Donusturulecek CV yi Secin", type=["pdf", "docx"])
 
