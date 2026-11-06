@@ -1,6 +1,6 @@
 import streamlit as st
 import os, io, datetime, json, re
-import pymupdf  # PDF okuyucu guncel API'ye (uyarisiz surum) gecirildi
+import pymupdf  # PDF okuyucu
 from docx import Document
 import openpyxl
 from openpyxl.drawing.image import Image as OpenpyxlImage
@@ -8,12 +8,12 @@ from openpyxl.styles import PatternFill
 from PIL import Image
 from groq import Groq
 
-APP_VERSION = "v2.8 (Groq Smart Model & 100% Clean Log)"
+APP_VERSION = "v2.9 (Groq Strict Text Model Filter)"
 TEMPLATE_PATH = "SEAFARER APPLICATION FORM.xlsx"
 RED_FILL = PatternFill(start_color="FF4D4D", end_color="FF4D4D", fill_type="solid")
 YELLOW_FILL = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
 
-# API Anahtarinizi dogrudan koda gomduk
+# Eger sistem hala model bulamazsa, lutfen Groq'tan YENI BIR API KEY alip buraya yapistirin:
 GROQ_API_KEY = "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"
 
 st.set_page_config(page_title="Bluefin Crewing - Enterprise CV Parser", layout="wide")
@@ -60,30 +60,28 @@ def analyze_cv_with_groq(text_content):
         available_models = client.models.list().data
         model_ids = [m.id for m in available_models]
         
-        priority_models = [
-            "llama-3.3-70b-versatile",
-            "llama-3.1-70b-versatile",
-            "llama-3.1-8b-instant",
-            "gemma2-9b-it",
-            "mixtral-8x7b-32768"
+        # SADECE bu metin modellerine izin ver:
+        valid_keywords = ["llama", "gemma", "mixtral", "qwen"]
+        # ASLA bu modelleri secme (arapca, ses, guvenlik, resim):
+        banned_keywords = ["guard", "whisper", "vision", "llava", "canopylabs", "orpheus"]
+        
+        valid_models = [
+            m for m in model_ids 
+            if any(k in m.lower() for k in valid_keywords) 
+            and not any(b in m.lower() for b in banned_keywords)
         ]
         
-        active_model = None
-        for pm in priority_models:
-            if pm in model_ids:
-                active_model = pm
-                break
-                
-        if not active_model:
-            for mid in model_ids:
-                if "guard" not in mid.lower() and "whisper" not in mid.lower():
-                    active_model = mid
-                    break
-                    
-        if not active_model:
-            active_model = "llama-3.1-8b-instant"
-    except Exception:
-        active_model = "llama-3.1-8b-instant" 
+        if not valid_models:
+            raise Exception("HATA: Bu API anahtarında kullanılabilecek hiçbir standart metin okuma modeli (Llama vb.) bulunamadı. Lütfen console.groq.com adresinden YENİ BİR API KEY oluşturup koda yapıştırın.")
+            
+        # Önceliği büyük modellere ver
+        valid_models.sort(key=lambda x: "70b" in x.lower() or "8x7b" in x.lower(), reverse=True)
+        active_model = valid_models[0]
+        
+    except Exception as e:
+        if "YENİ BİR API KEY" in str(e):
+            raise e
+        raise Exception(f"Model seçimi başarısız: {str(e)}")
         
     system_prompt = (
         "Sen uzman bir gemi insan kaynaklari (crewing) analistisin. "
@@ -127,16 +125,14 @@ def analyze_cv_with_groq(text_content):
         )
         
         raw_text = response.choices[0].message.content
-        
         match = re.search(r'\{.*\}', raw_text, re.DOTALL)
         if match:
-            json_str = match.group(0)
-            return json.loads(json_str), active_model
+            return json.loads(match.group(0)), active_model
         else:
             raise Exception("Yapay zeka geçerli bir format üretmedi.")
             
     except Exception as e:
-        raise Exception(f"Okuma Hatasi (Kullanılan Model: {active_model}): {str(e)}")
+        raise Exception(f"Okuma Hatasi (Model: {active_model}): {str(e)}")
 
 def safe_write(ws, row, column, value, fill=None):
     cell = ws.cell(row=row, column=column)
@@ -230,7 +226,7 @@ with st.sidebar:
     st.markdown(f"**⚓ Mimari:** `{APP_VERSION}`")
     st.divider()
     st.success("✅ **Sistem Durumu:** Çevrimiçi")
-    st.caption("Terminal uyarıları giderildi, kopya hataları engellendi ve Akıllı Model Seçici devrede.")
+    st.caption("Kesin Filtre Devrede: Sadece gerçek metin modelleri kabul edilir. Hata devam ederse YENİ API KEY alınmalıdır.")
 
 uploaded_file = st.file_uploader("Donusturulecek CV yi Secin", type=["pdf", "docx"])
 
@@ -238,7 +234,7 @@ if uploaded_file:
     file_bytes = uploaded_file.read()
     
     if st.button("🚀 CV'yi Çözümle (Sıfır Hata Modu)", type="primary"):
-        with st.spinner("Motor Devrede (Akıllı Model Seçiliyor ve CV Okunuyor)..."):
+        with st.spinner("Motor Devrede (Gerçek Metin Modeli Aranıyor)..."):
             try:
                 text_content, photo = extract_content(file_bytes, uploaded_file.name)
                 parsed_data, used_model = analyze_cv_with_groq(text_content)
