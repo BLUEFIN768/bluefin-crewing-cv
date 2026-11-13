@@ -1,5 +1,5 @@
 streamlit
-groq
+google-generativeai
 pydantic
 python-docx
 pymupdf
