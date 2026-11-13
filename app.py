@@ -114,7 +114,7 @@ def safe_extract(uploaded_file):
 st.set_page_config(page_title="BlueFin Crewing Parser", page_icon="🚢", layout="wide")
 
 # CONFIGURATION
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
+GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "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")
 TEMPLATE_PATH = "template.xlsx"
 
 if not GROQ_API_KEY:
