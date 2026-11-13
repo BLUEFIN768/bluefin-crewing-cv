@@ -53,12 +53,11 @@ def safe_extract(uploaded_file):
 # ==========================================
 # 3. ANA SAYFA
 # ==========================================
-st.set_page_config(page_title="BlueFin Gemini Parser", page_icon="♊")
+st.set_page_config(page_title="BlueFin Gemini Parser", page_icon="⚡")
 
-st.title("🚢 BlueFin CV Analyzer (Gemini Pro Edition)")
+st.title("🚢 BlueFin CV Analyzer (Flash Speed Edition)")
 
-# --- GEMINI API KEY Girişi ---
-user_api_key = st.sidebar.text_input("🔑 Gemini API Key Giriniz:", type="password", help="AI Studio'dan aldığınız API anahtarını girin")
+user_api_key = st.sidebar.text_input("🔑 Gemini API Key Giriniz:", type="password")
 
 if not user_api_key:
     st.warning("Lütfen sol menüdeki kutucuğa Gemini API anahtarınızı girin.")
@@ -66,13 +65,20 @@ if not user_api_key:
 
 # Gemini Konfigürasyonu
 genai.configure(api_key=user_api_key)
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-pro", 
-    generation_config={"response_mime_type": "application/json"}
-)
+
+# --- MODEL DEĞİŞİKLİĞİ BURADA ---
+# 'gemini-1.5-pro' yerine 'gemini-1.5-flash' kullandık. Erişim oranı çok daha yüksektir.
+try:
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash", 
+        generation_config={"response_mime_type": "application/json"}
+    )
+except Exception as e:
+    st.error(f"Model başlatma hatası: {str(e)}")
+    st.stop()
 
 SYSTEM_PROMPT = """Sen uzman bir gemi insan kaynaklari (crewing) analistisin. 
-Sana verilen CV metnini analiz et ve sadece JSON formatında çıktı ver. 
+Sana verilen CV metnini analiz et ve SADECE JSON formatında çıktı ver. 
 
 KURALLAR:
 1. Tarihleri GG.AA.YYYY formatında çıkart.
@@ -84,25 +90,22 @@ KURALLAR:
 uploaded_file = st.file_uploader("CV Yükle", type=['pdf', 'docx'])
 
 if uploaded_file:
-    if st.button("🔄 Gemini ile Analiz Et"):
+    if st.button("🔄 Gemini Flash ile Analiz Et"):
         try:
-            with st.spinner("💎 Gemini Pro analiz ediyor..."):
+            with st.spinner("⚡ Gemini Flash ışık hızında analiz ediyor..."):
                 text = safe_extract(uploaded_file)
                 
-                # Gemini çağrısı
                 full_prompt = f"{SYSTEM_PROMPT}\n\nANALİZ EDİLECEK CV METNİ:\n{text}"
                 response = model.generate_content(full_prompt)
                 
-                # JSON Parse işlemi
                 raw_json = response.text
-                # Olası markdown blocklarını temizle
                 raw_json = re.sub(r'^```json\s*|\s*```$', '', raw_json.strip(), flags=re.MULTILINE)
                 
                 data = CVData.parse_raw(raw_json)
                 data.normalize_dates()
                 
-                st.success("✅ Gemini Pro Başarıyla Analiz Etti!")
+                st.success("✅ Gemini Flash Başarıyla Analiz Etti!")
                 st.write(data.dict())
                 
         except Exception as e:
-            st.error(f"❌ GEMINI HATASI: {str(e)}")
+            st.error(f"❌ ANALİZ HATASI: {str(e)}")
