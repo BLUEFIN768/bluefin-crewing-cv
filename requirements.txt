@@ -1,8 +1,7 @@
 streamlit
-openpyxl
-pillow
-python-docx
-PyMuPDF
-instructor
 groq
 pydantic
+python-docx
+pymupdf
+openpyxl
+pandas
