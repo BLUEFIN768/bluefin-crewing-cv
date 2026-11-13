@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ValidationError
 from typing import List, Dict, Optional
 
 # ==========================================
-# 1. MODELLER (ESKİ models.py)
+# 1. MODELLER (VERİ YAPISI)
 # ==========================================
 class SeaServiceEntry(BaseModel):
     vsl_type: str = ""
@@ -64,7 +64,6 @@ class CVData(BaseModel):
     warnings: List[str] = []
 
     def normalize_dates(self):
-        """Tarihleri GG.AA.YYYY formatına zorlar"""
         date_fields = [
             'dob', 'seaman_book_issue', 'seaman_book_expiry', 
             'passport_issue', 'passport_expiry', 'medical_issue', 
@@ -86,7 +85,7 @@ class CVData(BaseModel):
         return date_str
 
 # ==========================================
-# 2. ARAÇLAR (ESKİ utils.py)
+# 2. BELGE OKUMA ARAÇLARI
 # ==========================================
 def extract_text_from_pdf(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -109,17 +108,13 @@ def safe_extract(uploaded_file):
         raise Exception("Desteklenmeyen dosya formatı. Lütfen PDF veya DOCX yükleyin.")
 
 # ==========================================
-# 3. ANA UYGULAMA VE LOGIC (app.py)
+# 3. ANA UYGULAMA VE LOGIC
 # ==========================================
 st.set_page_config(page_title="BlueFin Crewing Parser", page_icon="🚢", layout="wide")
 
-# CONFIGURATION
-GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "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")
+# --- API KEY BURAYA YERLEŞTİRİLDİ ---
+GROQ_API_KEY = "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"
 TEMPLATE_PATH = "template.xlsx"
-
-if not GROQ_API_KEY:
-    st.error("🚫 API Key eksik! Lütfen Streamlit Settings -> Secrets kısmına GROQ_API_KEY ekleyin.")
-    st.stop()
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -173,7 +168,7 @@ def fill_excel_template(data: CVData):
         wb = load_workbook(TEMPLATE_PATH)
         ws = wb.active
         
-        # !!! BURASI KRİTİK: Hücre adreslerini kendi template.xlsx dosyanıza göre güncelleyin !!!
+        # HUCRE MAPINGI (Buraları kendi template.xlsx dosyanıza göre güncelleyin)
         mapping = {
             "B5": data.name, 
             "D5": data.surname, 
@@ -189,7 +184,6 @@ def fill_excel_template(data: CVData):
         for cell, value in mapping.items():
             ws[cell] = value
             
-        # Tecrübe Tablosu (Satır 15 varsayılmıştır)
         start_row = 15
         for i, exp in enumerate(data.sea_service):
             row = start_row + i
@@ -215,16 +209,12 @@ uploaded_file = st.file_uploader("Lütfen Aday CV'sini Yükleyin", type=['pdf', 
 if uploaded_file:
     with st.spinner("📝 CV inceleniyor ve veriler ayıklanıyor..."):
         try:
-            # 1. Metin çıkarma
             cv_text = safe_extract(uploaded_file)
-            
-            # 2. AI ile analiz
             parsed_data = process_cv_with_llm(cv_text)
             
             if parsed_data:
                 st.success("✨ Veriler Başarıyla Yakalandı!")
                 
-                # Editlenebilir Önizleme Bölümü
                 st.subheader("📋 Veri Kontrol Paneli")
                 col1, col2, col3 = st.columns(3)
                 with col1:
@@ -234,7 +224,6 @@ if uploaded_file:
                 with col3:
                     edited_rank = st.text_input("Rütbe", parsed_data.rank_applied)
                 
-                # Değişiklikleri modele uygula
                 parsed_data.name = edited_name
                 parsed_data.surname = edited_surname
                 parsed_data.rank_applied = edited_rank
@@ -242,7 +231,6 @@ if uploaded_file:
                 if parsed_data.warnings:
                     st.warning(f"💡 Notlar: {', '.join(parsed_data.warnings)}")
 
-                # 3. Excel'e aktarma
                 if st.button("🚀 Formatı Excel'e Aktar ve İndir"):
                     result_file = fill_excel_template(parsed_data)
                     if result_file:
