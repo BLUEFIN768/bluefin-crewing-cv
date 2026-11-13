@@ -4,24 +4,125 @@ import json
 import re
 import pandas as pd
 from openpyxl import load_workbook
-from utils import safe_extract
-from models import CVData
-from pydantic import ValidationError
+import fitz  # PyMuPDF
+from docx import Document
+from pydantic import BaseModel, Field, ValidationError
+from typing import List, Dict, Optional
 
-# --- YAPILANDIRMA ---
+# ==========================================
+# 1. MODELLER (ESKİ models.py)
+# ==========================================
+class SeaServiceEntry(BaseModel):
+    vsl_type: str = ""
+    vsl_name: str = ""
+    company: str = ""
+    rank: str = ""
+    dwt: str = ""
+    engine_type: str = ""
+    sign_on: str = ""
+    sign_off: str = ""
+    reason: str = ""
+
+class STCWCertificate(BaseModel):
+    issue: str = ""
+    expiry: str = ""
+
+class CVData(BaseModel):
+    name: str = ""
+    surname: str = ""
+    rank_applied: str = ""
+    qualification: str = ""
+    id_no: str = ""
+    dob: str = ""
+    english_level: str = ""
+    phone: str = ""
+    phone2: str = ""
+    email: str = ""
+    address: str = ""
+    marital_status: str = ""
+    children: str = ""
+    height: str = ""
+    weight: str = ""
+    shoes: str = ""
+    overall: str = ""
+    next_of_kin: str = ""
+    seaman_book_no: str = ""
+    seaman_book_issue: str = ""
+    seaman_book_expiry: str = ""
+    passport_no: str = ""
+    passport_issue: str = ""
+    passport_expiry: str = ""
+    medical_issue: str = ""
+    medical_expiry: str = ""
+    yellow_fever_issue: str = ""
+    yellow_fever_expiry: str = ""
+    usa_visa: str = ""
+    schengen_visa: str = ""
+    sea_service: List[SeaServiceEntry] = []
+    stcw_certificates: Dict[str, STCWCertificate] = {}
+    uncertain_fields: List[str] = []
+    warnings: List[str] = []
+
+    def normalize_dates(self):
+        """Tarihleri GG.AA.YYYY formatına zorlar"""
+        date_fields = [
+            'dob', 'seaman_book_issue', 'seaman_book_expiry', 
+            'passport_issue', 'passport_expiry', 'medical_issue', 
+            'medical_expiry', 'yellow_fever_issue', 'yellow_fever_expiry'
+        ]
+        for field in date_fields:
+            val = getattr(self, field)
+            if val: setattr(self, field, self._clean_date(val))
+        for entry in self.sea_service:
+            entry.sign_on = self._clean_date(entry.sign_on)
+            entry.sign_off = self._clean_date(entry.sign_off)
+
+    def _clean_date(self, date_str):
+        if not date_str: return ""
+        match = re.search(r'(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})', date_str)
+        if match:
+            d, m, y = match.groups()
+            return f"{int(d):02d}.{int(m):02d}.{y}"
+        return date_str
+
+# ==========================================
+# 2. ARAÇLAR (ESKİ utils.py)
+# ==========================================
+def extract_text_from_pdf(file_bytes):
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    return text
+
+def extract_text_from_docx(file):
+    doc = Document(file)
+    return "\n".join([para.text for para in doc.paragraphs])
+
+def safe_extract(uploaded_file):
+    extension = uploaded_file.name.split('.')[-1].lower()
+    if extension == 'pdf':
+        return extract_text_from_pdf(uploaded_file.read())
+    elif extension == 'docx':
+        return extract_text_from_docx(uploaded_file)
+    else:
+        raise Exception("Desteklenmeyen dosya formatı. Lütfen PDF veya DOCX yükleyin.")
+
+# ==========================================
+# 3. ANA UYGULAMA VE LOGIC (app.py)
+# ==========================================
 st.set_page_config(page_title="BlueFin Crewing Parser", page_icon="🚢", layout="wide")
 
-# Secret'tan API Key alımı (Localde ise direkt yazabilirsiniz: GROQ_API_KEY = "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")
+# CONFIGURATION
 GROQ_API_KEY = st.secrets.get("GROQ_API_KEY", "")
-TEMPLATE_PATH = "template.xlsx" # Boş Excel şablonunuzun adı
+TEMPLATE_PATH = "template.xlsx"
 
 if not GROQ_API_KEY:
-    st.error("API Key eksik! Lütfen Secrets kısmına GROQ_API_KEY ekleyin.")
+    st.error("🚫 API Key eksik! Lütfen Streamlit Settings -> Secrets kısmına GROQ_API_KEY ekleyin.")
     st.stop()
 
 client = Groq(api_key=GROQ_API_KEY)
 
-# --- PROMPT TASARIMI ---
 SYSTEM_PROMPT = """Sen uzman bir gemi insan kaynaklari (crewing) analistisin.
 Verilen CV metnini analiz et ve kesinlikle SADECE JSON formatında cevap ver. 
 
@@ -30,7 +131,6 @@ KRİTİK KURALLAR:
 2. 'sea_service' kısmındaki gemi tecrübelerini en yeni tarihliden en eski tarihliye sırala.
 3. 'stcw_certificates' kısmında key olarak yalnızca şu rakamları kullan: 52, 53, 54, 55, 57, 61, 62, 63.
 4. Kesinlikle JSON dışında açıklama, giriş cümlesi veya kapanış notu EKLEME.
-5. Yanıtın başında ```json ... ``` blokları olsa bile içerik geçerli bir JSON olmalı.
 
 BEKLENEN MODEL:
 {
@@ -57,18 +157,15 @@ def process_cv_with_llm(text):
             temperature=0,
         )
         raw_output = completion.choices[0].message.content
-        
-        # Markdown JSON bloklarını temizle
         json_match = re.search(r'\{.*\}', raw_output, re.DOTALL)
         if not json_match:
             raise ValueError("AI çıktısında JSON formatı bulunamadı.")
         
-        # Pydantic ile valide et ve tarihlerini normalize et
         data = CVData.parse_raw(json_match.group(0))
         data.normalize_dates()
         return data
     except Exception as e:
-        st.error(f"LLM Hatası: {str(e)}")
+        st.error(f"🤖 AI İşleme Hatası: {str(e)}")
         return None
 
 def fill_excel_template(data: CVData):
@@ -76,18 +173,23 @@ def fill_excel_template(data: CVData):
         wb = load_workbook(TEMPLATE_PATH)
         ws = wb.active
         
-        # NOT: Buradaki hücre koordinatlarını (A1, B2 gibi) kendi template.xlsx dosyanıza göre ayarlamalısınız!
+        # !!! BURASI KRİTİK: Hücre adreslerini kendi template.xlsx dosyanıza göre güncelleyin !!!
         mapping = {
-            "B5": data.name, "D5": data.surname, "F5": data.rank_applied,
-            "B6": data.dob, "D6": data.id_no, "F6": data.qualification,
-            "B7": data.phone, "D7": data.email, "F7": data.english_level,
-            # Diğer alanları buraya eklemeye devam edin...
+            "B5": data.name, 
+            "D5": data.surname, 
+            "F5": data.rank_applied,
+            "B6": data.dob, 
+            "D6": data.id_no, 
+            "F6": data.qualification,
+            "B7": data.phone, 
+            "D7": data.email, 
+            "F7": data.english_level,
         }
         
         for cell, value in mapping.items():
             ws[cell] = value
             
-        # Deneyim Tablosunu Doldur (Örn: Satır 15'ten başladığını varsayalım)
+        # Tecrübe Tablosu (Satır 15 varsayılmıştır)
         start_row = 15
         for i, exp in enumerate(data.sea_service):
             row = start_row + i
@@ -97,53 +199,55 @@ def fill_excel_template(data: CVData):
             ws.cell(row=row, column=5, value=exp.sign_on)
             ws.cell(row=row, column=6, value=exp.sign_off)
 
-        out_filename = f"Parsed_{data.name}_{data.surname}.xlsx"
+        out_filename = f"Processed_{data.name}_{data.surname}.xlsx"
         wb.save(out_filename)
         return out_filename
     except Exception as e:
-        st.error(f"Excel Yazma Hatası: {str(e)}")
+        st.error(f"📊 Excel Yazma Hatası: {str(e)}")
         return None
 
-# --- STREAMLIT UI ---
-st.title("🚢 BlueFin CV Dönüştürücü")
-st.markdown("Sisteme PDF veya DOCX formatında CV yükleyin, kurum içi formatınıza dönüştürelim.")
+# --- STREAMLIT INTERFACE ---
+st.title("🚢 BlueFin CV Converter")
+st.info("PDF veya DOCX formatındaki CV'leri şirketin standart formatına dönüştürür.")
 
-uploaded_file = st.file_uploader("CV Seçin", type=['pdf', 'docx'])
+uploaded_file = st.file_uploader("Lütfen Aday CV'sini Yükleyin", type=['pdf', 'docx'])
 
 if uploaded_file:
-    with st.spinner("🔍 CV Analiz Ediliyor..."):
-        # 1. Text Extract
+    with st.spinner("📝 CV inceleniyor ve veriler ayıklanıyor..."):
         try:
+            # 1. Metin çıkarma
             cv_text = safe_extract(uploaded_file)
             
-            # 2. LLM Process
+            # 2. AI ile analiz
             parsed_data = process_cv_with_llm(cv_text)
             
             if parsed_data:
-                st.success("✅ Veriler başarıyla ayıklandı!")
+                st.success("✨ Veriler Başarıyla Yakalandı!")
                 
-                # Düzenlenebilir Alanlar
-                col1, col2 = st.columns(2)
+                # Editlenebilir Önizleme Bölümü
+                st.subheader("📋 Veri Kontrol Paneli")
+                col1, col2, col3 = st.columns(3)
                 with col1:
                     edited_name = st.text_input("Ad", parsed_data.name)
+                with col2:
                     edited_surname = st.text_input("Soyad", parsed_data.surname)
-                    edited_rank = st.text_input("Rank", parsed_data.rank_applied)
+                with col3:
+                    edited_rank = st.text_input("Rütbe", parsed_data.rank_applied)
                 
-                # Veriyi güncelle
+                # Değişiklikleri modele uygula
                 parsed_data.name = edited_name
                 parsed_data.surname = edited_surname
                 parsed_data.rank_applied = edited_rank
                 
-                # Warningleri Göster
                 if parsed_data.warnings:
-                    st.warning(f"Uyarılar: {', '.join(parsed_data.warnings)}")
+                    st.warning(f"💡 Notlar: {', '.join(parsed_data.warnings)}")
 
-                # 3. Excel Export
-                if st.button("💾 Excel Olarak İndir"):
+                # 3. Excel'e aktarma
+                if st.button("🚀 Formatı Excel'e Aktar ve İndir"):
                     result_file = fill_excel_template(parsed_data)
                     if result_file:
                         with open(result_file, "rb") as f:
-                            st.download_button("📥 Dosyayı Hemen İndir", f, file_name=result_file)
+                            st.download_button("📥 EXCEL'İ İNDİR", f, file_name=result_file)
 
         except Exception as e:
-            st.error(f"Sistem Hatası: {str(e)}")
+            st.error(f"❌ Sistem Hatası: {str(e)}")
